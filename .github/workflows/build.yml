@@ -41,13 +41,6 @@ jobs:
             archive_name: nodehotkey-macos-arm64.tar.gz
             is_macos: true
 
-          - os: macos-13
-            platform_name: macOS Intel x64
-            target: x86_64-apple-darwin
-            binary_name: nodehotkey-rust
-            archive_name: nodehotkey-macos-x64.tar.gz
-            is_macos: true
-
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v4
