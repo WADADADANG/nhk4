@@ -421,6 +421,22 @@
 
   btnMinimize.addEventListener('click', () => setBubble(true));
 
+  // Draggable Header for PiP Window (Linux WebKitGTK / Windows WebView2 / macOS)
+  const pipTitlebarEl = document.getElementById('pip-titlebar');
+  if (pipTitlebarEl) {
+    pipTitlebarEl.addEventListener('mousedown', (e) => {
+      if (e.button !== 0) return;
+      if (e.target.closest('button, .pip-icon-btn, input, select, .pip-popover, [data-no-drag]')) return;
+      try {
+        if (window.__TAURI__ && window.__TAURI__.window && typeof window.__TAURI__.window.getCurrentWindow === 'function') {
+          window.__TAURI__.window.getCurrentWindow().startDragging();
+        } else if (window.__TAURI_INTERNALS__ && typeof window.__TAURI_INTERNALS__.invoke === 'function') {
+          window.__TAURI_INTERNALS__.invoke('plugin:window|start_dragging');
+        }
+      } catch (_) {}
+    });
+  }
+
   // Draggable Floating Bubble with Click-to-Restore
   let isBubblePointerDown = false;
   let bubbleStartScreenX = 0;

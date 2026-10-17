@@ -13,10 +13,10 @@
   <div class="pip-container" id="pip-root">
 
     <!-- Row 1: Title bar (whole bar is draggable, buttons are not) -->
-    <header class="pip-titlebar" id="pip-titlebar">
-      <div class="pip-title" title="ลากตรงนี้เพื่อย้ายหน้าต่าง">
-        <span class="pip-status-dot" id="pip-status-dot"></span>
-        <span class="pip-title-text" id="pip-title-text">จอลอย PiP</span>
+    <header class="pip-titlebar" id="pip-titlebar" data-tauri-drag-region>
+      <div class="pip-title" data-tauri-drag-region title="ลากตรงนี้เพื่อย้ายหน้าต่าง">
+        <span class="pip-status-dot" id="pip-status-dot" data-tauri-drag-region></span>
+        <span class="pip-title-text" id="pip-title-text" data-tauri-drag-region>จอลอย PiP</span>
       </div>
 
       <div class="pip-actions">

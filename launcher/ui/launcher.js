@@ -485,6 +485,33 @@
   if (btnWinMax) btnWinMax.onclick = () => api.maximizeWindow();
   if (btnWinClose) btnWinClose.onclick = () => api.closeWindow();
 
+  // 2.1 Cross-Platform Window Dragging (Linux WebKitGTK, Windows WebView2, macOS WebKit)
+  const dragSelector = '#titlebar, .launcher-topbar, .topbar-drag-area, .topbar-path, .sidebar-brand-box, [data-tauri-drag-region]';
+  document.addEventListener('mousedown', (e) => {
+    if (e.button !== 0) return; // Left mouse click only
+    if (e.target.closest('button, a, input, select, textarea, .btn-topbar-tool, .win-btn, .sidebar-nav-btn, .lang-pill-wrap, [data-no-drag]')) {
+      return;
+    }
+    const isDragArea = e.target.closest(dragSelector);
+    if (!isDragArea) return;
+
+    try {
+      if (window.__TAURI__ && window.__TAURI__.window && typeof window.__TAURI__.window.getCurrentWindow === 'function') {
+        window.__TAURI__.window.getCurrentWindow().startDragging();
+      } else if (window.__TAURI_INTERNALS__ && typeof window.__TAURI_INTERNALS__.invoke === 'function') {
+        window.__TAURI_INTERNALS__.invoke('plugin:window|start_dragging');
+      }
+    } catch (_) {}
+  });
+
+  const titlebarEl = document.getElementById('titlebar');
+  if (titlebarEl) {
+    titlebarEl.addEventListener('dblclick', (e) => {
+      if (e.target.closest('button, a, input, select, textarea, .btn-topbar-tool, .win-btn, .lang-pill-wrap')) return;
+      api.maximizeWindow();
+    });
+  }
+
   // 3. Multilingual Translations Dictionary (TH / EN)
   const i18nDict = {
     th: {

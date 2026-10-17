@@ -262,12 +262,17 @@ body.app-root-body {
   padding: 0 12px;
   flex-shrink: 0;
   -webkit-app-region: drag;
+  user-select: none;
+  -webkit-user-select: none;
   z-index: 100;
 }
 
 .topbar-drag-area {
   display: flex;
   align-items: center;
+  user-select: none;
+  -webkit-user-select: none;
+  cursor: default;
 }
 
 .topbar-path {
