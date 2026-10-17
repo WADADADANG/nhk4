@@ -409,7 +409,22 @@
           3. ใน [`src/engine/executor.rs`](file:///c:/Users/WADADADANG/Desktop/MyProjects/NodeHotKeyV4/src/engine/executor.rs): ดึงพารามิเตอร์ `targetClient`, `subfolder`, `prefix`, `captureRegion`, `annotate` จากโหนด รันบน Tokio Async Task และส่งสัญญาณออกพอร์ต `onComplete` เมื่อเซฟสำเร็จ หรือ `onError` หากล้มเหลว
           4. เพิ่มชุดทดสอบใน `src/vision/capture.rs` ครบทั้ง 4 ด้าน: `test_generate_screenshot_path`, `test_process_region_crop`, `test_save_and_process_screenshot_flow`, `test_desktop_screen_capture_live`
         - **Unit Tests 100%:** รัน `cargo test` ผ่านสมบูรณ์ครบทั้ง **37/37 tests passed** (Zero Regression)
-    - รัน `cargo check` และ `cargo test` ผ่านสมบูรณ์ 100% (**37/37 tests passed**)
+      - **เฟส 40 ปรับปรุงความสมดุลของระดับเสียง (Sound Repeat Volume Balance):**
+        - ปรับปรุง [`src/audio/sound.rs`](file:///c:/Users/WADADADANG/Desktop/MyProjects/NodeHotKeyV4/src/audio/sound.rs) ให้แชร์ Audio Sink ตัวเดิมและรีเซ็ตระดับ Gain/Volume เสมอ ป้องกันปัญหาเสียงรอบแรกดังกว่ารอบถัดไป
+      - **เฟส 41 แก้ไขโหนด Format Text ส่งผ่านค่าสู่ Step Log (Pin Data Resolution):**
+        - ปรับปรุง [`src/engine/executor.rs`](file:///c:/Users/WADADADANG/Desktop/MyProjects/NodeHotKeyV4/src/engine/executor.rs): เพิ่ม `resolve_data_string` ในการแปลงค่า Data Pin ข้ามโหนด (`text_out` -> `msg_in`) ทำให้ข้อความผลลัพธ์จาก `format_text` แสดงผลใน Terminal Logs ถูกต้อง 100%
+      - **เฟส 42 อัปเกรดเวอร์ชันสู่ v4.0.0 เต็มรูปแบบ และ Multi-OS CI/CD Workflow:**
+        - อัปเดต Version Strings สู่ `4.0.0` ทั่วทั้งโค้ดเบส (Cargo.toml, tauri.conf.json, main.rs, state.rs, routes.rs, model.rs, launcher.html, Default.json)
+        - สร้าง Multi-OS CI/CD Build Workflow ใน [`.github/workflows/build.yml`](file:///c:/Users/WADADADANG/Desktop/MyProjects/NodeHotKeyV4/.github/workflows/build.yml) รองรับ Windows x64, Linux x64, และ macOS ARM64
+      - **เฟส 43 แก้ไขปัญหาระบบลากหน้าต่าง (Tauri Window Dragging) บน Linux WebKitGTK และ PiP:**
+        - ติดตั้ง `data-tauri-drag-region` ครบทุกจุดใน `index.html` และ `pip.html`
+        - เพิ่ม Dual-Layer JavaScript Drag Listener ดักจับ `mousedown` แล้วสั่ง `startDragging()` ส่งตรงไปยัง Native GTK Window Manager
+      - **เฟส 44 ฝังไฟล์หน้ากาก UI ทั้งหมด (HTML, CSS, JS, Icons) เข้าเนื้อไฟล์ `.exe` (Embedded Binary Assets via `rust-embed`):**
+        - ติดตั้ง `rust-embed = "8.5"` ใน [`Cargo.toml`](file:///c:/Users/WADADADANG/Desktop/MyProjects/NodeHotKeyV4/Cargo.toml)
+        - ฝัง `public/`, `launcher/ui/`, และ `icons/` รวมเข้าในตัว Binary ใน [`src/server/static_files.rs`](file:///c:/Users/WADADADANG/Desktop/MyProjects/NodeHotKeyV4/src/server/static_files.rs)
+        - รองรับระบบ **Hybrid Smart Fallback** ใน [`src/server/routes.rs`](file:///c:/Users/WADADADANG/Desktop/MyProjects/NodeHotKeyV4/src/server/routes.rs): ดึงไฟล์จากดิสก์หากอยู่ในโหมดพัฒนา แต่หากไม่มีโฟลเดอร์ภายนอก (โหมด Release แจกจ่าย) จะอ่านจากเนื้อในของ `.exe` โดยตรง 100% ป้องกันการส่องดูหรือแอบดัดแปลงโค้ด UI ได้อย่างสมบูรณ์แบบ
+        - ปรับ Workflow GitHub Actions ให้ตัดการ Trigger อัตโนมัติเมื่อ Push branch ปกติ (ให้รันเฉพาะเมื่อติด Release Tag `v*` หรือกดรันเอง)
+        - รัน `cargo check` และ `cargo test` ผ่านสมบูรณ์ 100% (**43/43 tests passed**)
 - **สร้างและปรับปรุงเครื่องมือ .bat (Pure English ASCII / Zero Emoji):**
   - [deploy_admin.bat](file:///c:/Users/WADADADANG/Desktop/MyProjects/NodeHotKeyV4/deploy_admin.bat): ดับเบิลคลิก Deploy เว็บแอดมินขึ้น Vercel ในคลิกเดียว
   - [test.bat](file:///c:/Users/WADADADANG/Desktop/MyProjects/NodeHotKeyV4/test.bat): ดับเบิลคลิกรัน Unit Tests ในคลิกเดียว
@@ -420,9 +435,9 @@
 
 ## 4. Security & Anti-Crack Decisions (Roadmap)
 ข้อสรุปแนวทางความปลอดภัยร่วมกับผู้ใช้:
-1. **สิ่งที่ไม่ต้องเข้ารหัส (Open):**
-   - Profile JSON (`configs/profiles/*.json`) ปล่อยเปิดปกติ เพื่อให้ผู้ใช้และเพื่อนแก้ไข/แชร์ได้สะดวก
-   - UI (`launcher/`, `public/`) ปล่อยปกติ เพราะไม่มีความลับทางธุรกิจ
+1. **การจัดการไฟล์และความปลอดภัยระดับส่วนประกอบ (Component Protection):**
+   - **Profile JSON (`configs/profiles/*.json`):** ปล่อยเป็น Plaintext ปกติ เพื่อให้ผู้ใช้แก้ไข/แชร์ได้สะดวก
+   - **หน้ากาก UI (`launcher/`, `public/`, `icons/`):** ฝังเข้าใน Binary `.exe` 100% ผ่าน `rust-embed` ป้องกันการส่องดูหรือแอบแก้โค้ด HTML/JS
 2. **สิ่งที่ต้องป้องกันเข้มงวด 2 ส่วนหลัก:**
    - **Database & Secret Protection:** ซ่อน API Secrets / Database URLs ด้วย Compile-time Obfuscation และติดต่อผ่าน Gateway API (Cloudflare Worker) เสมอ ไม่ใส่ Master Key ลงใน Client
    - **License System:** ป้องกันการก๊อปและแฮกโปรแกรมด้วย HWID + ลายเซ็นดิจิทัล Ed25519 ตรวจสอบสิทธิ์กับเซิร์ฟเวอร์ก่อนเริ่ม Engine
