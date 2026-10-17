@@ -1,14 +1,14 @@
-# 🦀 NodeHotKeyV4 - AI Assistant & Project Memory Guide
+# 🦀 NHK4 (v4.0.0) - AI Assistant & Project Memory Guide
 *(Project Context, System Architecture & Engineering Principles for AI Agents)*
 
-เอกสารนี้ทำหน้าที่เป็น **Project Memory (สมองส่วนจดจำ)** ของโปรเจกต์ **NodeHotKeyV4** เพื่อให้ AI ทุกตัวที่เปิดแชทใหม่เข้าใจบริบททั้งหมดทันที สามารถสานต่องานได้ตรงจุด และปฏิบัติตามกฎของผู้ใช้อย่างเคร่งครัด
+เอกสารนี้ทำหน้าที่เป็น **Project Memory (สมองส่วนจดจำ)** ของโปรเจกต์ **NHK4** (เดิมชื่อ NodeHotKeyV4) เพื่อให้ AI ทุกตัวที่เปิดแชทใหม่เข้าใจบริบททั้งหมดทันที สามารถสานต่องานได้ตรงจุด และปฏิบัติตามกฎของผู้ใช้อย่างเคร่งครัด
 
 ---
 
 ## 📌 1. ภาพรวมโปรเจกต์และความเป็นมา (Overview & Evolution)
 - **โปรเจกต์ต้นแบบ (Old Project):** `C:\Users\WADADADANG\Desktop\MyProjects\NodeHotkey`
   - ทำงานด้วย Node.js Runtime + Puppeteer + Electron
-- **โปรเจกต์ใหม่นี้ (NodeHotKeyV4):** `C:\Users\WADADADANG\Desktop\MyProjects\NodeHotKeyV4`
+- **โปรเจกต์ใหม่นี้ (NHK4):** `C:\Users\WADADADANG\Desktop\MyProjects\NodeHotKeyV4`
   - ถูก **เขียนขึ้นใหม่ด้วยภาษา Rust เต็มรูปแบบ (Rust Native Core Engine)**
   - ประสิทธิภาพสูงขึ้นมาก กิน RAM ต่ำ ตอบสนองไวระดับ microseconds
   - ปลอดภัยในระดับ Binary ยากต่อการแอบเจาะหรือดัดแปลง (Memory-Safe & Binary Obfuscation)

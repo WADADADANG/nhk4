@@ -605,11 +605,11 @@ mod tests {
 
         let launcher_file = LauncherAssets::get("index.html").expect("Launcher index.html must be embedded");
         let launcher_html = String::from_utf8_lossy(&launcher_file.data);
-        assert!(launcher_html.contains("NodeHotkey"), "Launcher HTML must contain NodeHotkey");
+        assert!(launcher_html.contains("NHK4") || launcher_html.contains("NodeHotkey"), "Launcher HTML must contain NHK4");
 
         let public_file = PublicAssets::get("index.html").expect("Public index.html must be embedded");
         let public_html = String::from_utf8_lossy(&public_file.data);
-        assert!(public_html.contains("NodeHotkey") || public_html.contains("Action"), "Public HTML must contain NodeHotkey");
+        assert!(public_html.contains("NHK4") || public_html.contains("NodeHotkey") || public_html.contains("Action"), "Public HTML must contain NHK4");
 
         let icon_file = IconAssets::get("icon.png").expect("icon.png must be embedded");
         assert!(!icon_file.data.is_empty(), "Embedded icon data must not be empty");

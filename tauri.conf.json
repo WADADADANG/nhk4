@@ -1,8 +1,8 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "NodeHotkey",
+  "productName": "nhk4",
   "version": "4.0.0",
-  "identifier": "com.nodehotkey.studio",
+  "identifier": "com.nhk4.app",
   "build": {
     "frontendDist": "public"
   },
@@ -11,7 +11,7 @@
     "windows": [
       {
         "label": "main",
-        "title": "NodeHotkey Launcher",
+        "title": "NHK4",
         "url": "http://127.0.0.1:3088/launcher",
         "width": 1280,
         "height": 800,
@@ -22,7 +22,7 @@
       },
       {
         "label": "overlay",
-        "title": "NodeHotkey HUD Overlay",
+        "title": "NHK4 HUD Overlay",
         "url": "http://127.0.0.1:3088/launcher/overlay.html",
         "width": 210,
         "height": 180,

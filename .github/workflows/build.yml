@@ -20,22 +20,22 @@ jobs:
           - os: windows-latest
             platform_name: Windows x64
             target: x86_64-pc-windows-msvc
-            binary_name: nodehotkey-rust.exe
-            archive_name: nodehotkey-windows-x64.zip
+            binary_name: nhk4.exe
+            archive_name: nhk4-windows-x64.zip
             is_windows: true
 
           - os: ubuntu-22.04
             platform_name: Linux x64
             target: x86_64-unknown-linux-gnu
-            binary_name: nodehotkey-rust
-            archive_name: nodehotkey-linux-x64.tar.gz
+            binary_name: nhk4
+            archive_name: nhk4-linux-x64.tar.gz
             is_linux: true
 
           - os: macos-latest
             platform_name: macOS Apple Silicon (M-series)
             target: aarch64-apple-darwin
-            binary_name: nodehotkey-rust
-            archive_name: nodehotkey-macos-arm64.tar.gz
+            binary_name: nhk4
+            archive_name: nhk4-macos-arm64.tar.gz
             is_macos: true
 
     steps:
@@ -75,7 +75,7 @@ jobs:
         if: matrix.is_windows
         shell: pwsh
         run: |
-          $dist = "dist\NodeHotKey"
+          $dist = "dist\nhk4"
           New-Item -ItemType Directory -Force -Path $dist
           Copy-Item "target\${{ matrix.target }}\release\${{ matrix.binary_name }}" -Destination $dist
           Copy-Item -Recurse "configs" -Destination "$dist\configs"
@@ -88,14 +88,14 @@ jobs:
       - name: Package Distribution (Linux / macOS)
         if: "!matrix.is_windows"
         run: |
-          mkdir -p dist/NodeHotKey
-          cp "target/${{ matrix.target }}/release/${{ matrix.binary_name }}" dist/NodeHotKey/
-          chmod +x "dist/NodeHotKey/${{ matrix.binary_name }}"
-          cp -r configs dist/NodeHotKey/
-          cp -r launcher dist/NodeHotKey/
-          cp -r public dist/NodeHotKey/
-          cp README.md dist/NodeHotKey/
-          tar -czvf "${{ matrix.archive_name }}" -C dist/NodeHotKey .
+          mkdir -p dist/nhk4
+          cp "target/${{ matrix.target }}/release/${{ matrix.binary_name }}" dist/nhk4/
+          chmod +x "dist/nhk4/${{ matrix.binary_name }}"
+          cp -r configs dist/nhk4/
+          cp -r launcher dist/nhk4/
+          cp -r public dist/nhk4/
+          cp README.md dist/nhk4/
+          tar -czvf "${{ matrix.archive_name }}" -C dist/nhk4 .
 
       - name: Upload Build Artifact
         uses: actions/upload-artifact@v4

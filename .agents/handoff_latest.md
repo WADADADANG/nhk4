@@ -425,6 +425,13 @@
         - รองรับระบบ **Hybrid Smart Fallback** ใน [`src/server/routes.rs`](file:///c:/Users/WADADADANG/Desktop/MyProjects/NodeHotKeyV4/src/server/routes.rs): ดึงไฟล์จากดิสก์หากอยู่ในโหมดพัฒนา แต่หากไม่มีโฟลเดอร์ภายนอก (โหมด Release แจกจ่าย) จะอ่านจากเนื้อในของ `.exe` โดยตรง 100% ป้องกันการส่องดูหรือแอบดัดแปลงโค้ด UI ได้อย่างสมบูรณ์แบบ
         - ปรับ Workflow GitHub Actions ให้ตัดการ Trigger อัตโนมัติเมื่อ Push branch ปกติ (ให้รันเฉพาะเมื่อติด Release Tag `v*` หรือกดรันเอง)
         - รัน `cargo check` และ `cargo test` ผ่านสมบูรณ์ 100% (**43/43 tests passed**)
+      - **เฟส 45 เปลี่ยนชื่อโปรแกรมและโปรเจกต์เป็น `nhk4` (Rebrand to NHK4):**
+        - เปลี่ยนชื่อ Package ใน [`Cargo.toml`](file:///c:/Users/WADADADANG/Desktop/MyProjects/NodeHotKeyV4/Cargo.toml) เป็น `nhk4` ทำให้ Binary ออกมาเป็น `nhk4.exe` และ `nhk4` โดยตรง
+        - อัปเดต `tauri.conf.json`: `"productName": "nhk4"`, `"identifier": "com.nhk4.app"`, หัวหน้าต่าง `"title": "NHK4"`
+        - อัปเดต [`.github/workflows/build.yml`](file:///c:/Users/WADADADANG/Desktop/MyProjects/NodeHotKeyV4/.github/workflows/build.yml): บิลด์และแจกจ่าย `nhk4-windows-x64.zip`, `nhk4-linux-x64.tar.gz`, `nhk4-macos-arm64.tar.gz`
+        - อัปเดต [`start.bat`](file:///c:/Users/WADADADANG/Desktop/MyProjects/NodeHotKeyV4/start.bat) และ [`build.bat`](file:///c:/Users/WADADADANG/Desktop/MyProjects/NodeHotKeyV4/build.bat) ให้ชี้และจัดการ Process `nhk4.exe`
+        - อัปเดต Header และ Brand บน UI ([`launcher/ui/index.html`](file:///c:/Users/WADADADANG/Desktop/MyProjects/NodeHotKeyV4/launcher/ui/index.html) & [`public/index.html`](file:///c:/Users/WADADADANG/Desktop/MyProjects/NodeHotKeyV4/public/index.html)) เป็น **`NHK4`**
+        - รัน `cargo check`, `cargo build`, และ `cargo test` ผ่านสมบูรณ์ 100% (**43/43 tests passed**)
 - **สร้างและปรับปรุงเครื่องมือ .bat (Pure English ASCII / Zero Emoji):**
   - [deploy_admin.bat](file:///c:/Users/WADADADANG/Desktop/MyProjects/NodeHotKeyV4/deploy_admin.bat): ดับเบิลคลิก Deploy เว็บแอดมินขึ้น Vercel ในคลิกเดียว
   - [test.bat](file:///c:/Users/WADADADANG/Desktop/MyProjects/NodeHotKeyV4/test.bat): ดับเบิลคลิกรัน Unit Tests ในคลิกเดียว

@@ -1,12 +1,12 @@
 @echo off
 setlocal
 chcp 65001 >nul
-title NodeHotKeyV4 - Build Manager
+title NHK4 - Build Manager
 
 cd /d "%~dp0"
 
 echo ========================================================
-echo  NodeHotKeyV4 - Build Manager
+echo  NHK4 - Build Manager
 echo ========================================================
 echo.
 echo  [1] Debug Build   - Fast compile for testing
@@ -24,7 +24,7 @@ if %ERRORLEVEL% EQU 0 (
     echo.
     echo ========================================================
     echo  [SUCCESS] Debug build finished!
-    echo  Binary: target\debug\nodehotkey-rust.exe
+    echo  Binary: target\debug\nhk4.exe
     echo ========================================================
 ) else (
     echo.
@@ -42,7 +42,7 @@ if %ERRORLEVEL% EQU 0 (
     echo.
     echo ========================================================
     echo  [SUCCESS] Release build finished!
-    echo  Binary: target\release\nodehotkey-rust.exe
+    echo  Binary: target\release\nhk4.exe
     echo ========================================================
 ) else (
     echo.

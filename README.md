@@ -1,4 +1,4 @@
-# 🦀 NodeHotKeyV4 (v4.0.0) - Rust Native Core Engine
+# 🦀 NHK4 (v4.0.0) - Rust Native Core Engine
 ### Cross-Platform Multi-Client WebGL Automation Suite (Windows, Linux, macOS)
 
 โปรเจกต์อัตโนมัติกดปุ่มคีย์บอร์ดและเมาส์ในเบราว์เซอร์แบบพื้นหลัง (Background Automation) สไตล์ **Unreal Engine Blueprints** ที่ถูกเขียนขึ้นใหม่ด้วยภาษา **Rust** เต็มรูปแบบ เพื่อประสิทธิภาพสูงสุด ประหยัด RAM ป้องกันการ Reverse-Engineering และรันได้ข้ามระบบปฏิบัติการ
@@ -17,7 +17,7 @@
 ## 📁 โครงสร้างโปรเจกต์ (Project Structure)
 
 ```text
-nodehotkey-rust/
+nhk4/
 ├── src/                    # Rust Native Core Source Code
 │   ├── browser/            # Multi-Client CDP Browser Manager
 │   ├── config/             # Config Store & File Watcher (SSE)

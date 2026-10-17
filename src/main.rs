@@ -1,7 +1,7 @@
-use nodehotkey_rust::browser::ClientSlot;
-use nodehotkey_rust::input::HotkeyAction;
-use nodehotkey_rust::server::start_web_server;
-use nodehotkey_rust::state::AppState;
+use nhk4::browser::ClientSlot;
+use nhk4::input::HotkeyAction;
+use nhk4::server::start_web_server;
+use nhk4::state::AppState;
 use sha2::Digest;
 use std::env;
 use std::path::PathBuf;
@@ -12,7 +12,7 @@ fn hex_dump(bytes: &[u8]) -> String {
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("========================================================");
-    println!("🦀 NodeHotkey v4.0.0 - Rust Native Core Engine");
+    println!("🦀 NHK4 v4.0.0 - Rust Native Core Engine");
     println!("   Multi-Client Background WebGL Automation Suite");
     println!("   Cross-Platform: Windows, Linux, macOS");
     println!("========================================================\n");
@@ -21,14 +21,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // CLI Security & License Tools
     if args.iter().any(|a| a == "--hwid") {
-        let hwid = nodehotkey_rust::security::generate_hwid();
+        let hwid = nhk4::security::generate_hwid();
         println!("🔐 Machine HWID: {}", hwid);
         return Ok(());
     }
 
     if args.iter().any(|a| a == "--keys-info") {
-        let signing_key = nodehotkey_rust::security::get_master_signing_key();
-        let verifying_key = nodehotkey_rust::security::get_master_verifying_key();
+        let signing_key = nhk4::security::get_master_signing_key();
+        let verifying_key = nhk4::security::get_master_verifying_key();
         println!("========================================================");
         println!("🔐 Ed25519 Cryptographic Master Keys:");
         println!("   Public Key (Embed in .exe / Client Verification):");
@@ -42,8 +42,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     if let Some(pos) = args.iter().position(|a| a == "--gen-key") {
-        let target_hwid = args.get(pos + 1).cloned().unwrap_or_else(nodehotkey_rust::security::generate_hwid);
-        let claims = nodehotkey_rust::security::LicenseClaims {
+        let target_hwid = args.get(pos + 1).cloned().unwrap_or_else(nhk4::security::generate_hwid);
+        let claims = nhk4::security::LicenseClaims {
             hwid: target_hwid.clone(),
             tier: "PRO".to_string(),
             expires_at: -1, // Lifetime
@@ -53,14 +53,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 .as_secs() as i64,
             user_id: Some("ADMIN_GENERATED".to_string()),
         };
-        let signing_key = nodehotkey_rust::security::get_master_signing_key();
-        let key = nodehotkey_rust::security::generate_license_key_ed25519(&claims, &signing_key);
+        let signing_key = nhk4::security::get_master_signing_key();
+        let key = nhk4::security::generate_license_key_ed25519(&claims, &signing_key);
         println!("🔑 Generated Ed25519 License Key for HWID [{}]:\n{}", target_hwid, key);
         return Ok(());
     }
 
     if args.iter().any(|a| a == "--gen-key-universal") {
-        let claims = nodehotkey_rust::security::LicenseClaims {
+        let claims = nhk4::security::LicenseClaims {
             hwid: "UNIVERSAL".to_string(),
             tier: "LIFETIME_DEV".to_string(),
             expires_at: -1, // Lifetime
@@ -70,8 +70,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 .as_secs() as i64,
             user_id: Some("MASTER_DEVELOPER".to_string()),
         };
-        let signing_key = nodehotkey_rust::security::get_master_signing_key();
-        let key = nodehotkey_rust::security::generate_license_key_ed25519(&claims, &signing_key);
+        let signing_key = nhk4::security::get_master_signing_key();
+        let key = nhk4::security::generate_license_key_ed25519(&claims, &signing_key);
         println!("🔑 Generated Universal Ed25519 Developer Key (Works on any machine):\n{}", key);
         return Ok(());
     }
@@ -87,7 +87,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
         let mut sql_values = Vec::new();
         for i in 1..=count {
-            let key = nodehotkey_rust::security::generate_random_serial_key(&tier);
+            let key = nhk4::security::generate_random_serial_key(&tier);
             println!("{}. {}", i, key);
             sql_values.push(format!("('{}', '{}', {}, 'UNUSED', 'Lot generated')", key, tier, duration_days));
         }
@@ -264,7 +264,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 let mut window_rx = state_tauri.window_action_sender.subscribe();
                 let app_handle_broker = app.handle().clone();
                 tauri::async_runtime::spawn(async move {
-                    use nodehotkey_rust::state::WindowAction;
+                    use nhk4::state::WindowAction;
                     while let Ok(action) = window_rx.recv().await {
                         match action {
                             WindowAction::Minimize => {
