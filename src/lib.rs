@@ -598,6 +598,22 @@ mod tests {
         ActionExecutor::execute_node(state.clone(), log_node, &mut call_stack).await;
         assert!(call_stack.contains("node_log_1"));
     }
+
+    #[test]
+    fn test_embedded_assets_presence() {
+        use crate::server::static_files::{IconAssets, LauncherAssets, PublicAssets};
+
+        let launcher_file = LauncherAssets::get("index.html").expect("Launcher index.html must be embedded");
+        let launcher_html = String::from_utf8_lossy(&launcher_file.data);
+        assert!(launcher_html.contains("NodeHotkey"), "Launcher HTML must contain NodeHotkey");
+
+        let public_file = PublicAssets::get("index.html").expect("Public index.html must be embedded");
+        let public_html = String::from_utf8_lossy(&public_file.data);
+        assert!(public_html.contains("NodeHotkey") || public_html.contains("Action"), "Public HTML must contain NodeHotkey");
+
+        let icon_file = IconAssets::get("icon.png").expect("icon.png must be embedded");
+        assert!(!icon_file.data.is_empty(), "Embedded icon data must not be empty");
+    }
 }
 
 

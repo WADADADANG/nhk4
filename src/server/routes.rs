@@ -1,5 +1,7 @@
 use crate::model::{GlobalConfig, Profile};
-use crate::server::static_files::serve_file_from_disk;
+use crate::server::static_files::{
+    serve_embedded_file, serve_file_from_disk, IconAssets, LauncherAssets, PublicAssets,
+};
 use crate::state::AppState;
 use axum::extract::{Path as AxumPath, Query, State};
 use axum::http::StatusCode;
@@ -1508,10 +1510,24 @@ pub async fn static_fallback(
 
     // HTML entry points
     if path_str == "/launcher" || path_str == "/launcher/" || path_str == "/launcher/index.html" {
-        return serve_file_from_disk(base_dir.join("launcher/ui/index.html")).await;
+        let disk_path = base_dir.join("launcher/ui/index.html");
+        if disk_path.is_file() {
+            return serve_file_from_disk(disk_path).await;
+        }
+        if let Some(file) = LauncherAssets::get("index.html") {
+            return serve_embedded_file("index.html", &file.data);
+        }
+        return (StatusCode::NOT_FOUND, "Launcher index.html not found").into_response();
     }
     if path_str == "/" || path_str.is_empty() || path_str == "/index.html" {
-        return serve_file_from_disk(base_dir.join("public/index.html")).await;
+        let disk_path = base_dir.join("public/index.html");
+        if disk_path.is_file() {
+            return serve_file_from_disk(disk_path).await;
+        }
+        if let Some(file) = PublicAssets::get("index.html") {
+            return serve_embedded_file("index.html", &file.data);
+        }
+        return (StatusCode::NOT_FOUND, "Public index.html not found").into_response();
     }
 
     let clean_path = path_str.trim_start_matches('/');
@@ -1533,14 +1549,18 @@ pub async fn static_fallback(
             .into_response();
     }
 
-    // 1. Look inside public/
+    // 1. Look inside public/ (Disk first, then Embedded)
     let public_subpath = clean_path.strip_prefix("public/").unwrap_or(clean_path);
     let p_public = base_dir.join("public").join(public_subpath);
     if p_public.is_file() {
         return serve_file_from_disk(p_public).await;
     }
+    let norm_public = public_subpath.replace('\\', "/");
+    if let Some(file) = PublicAssets::get(&norm_public) {
+        return serve_embedded_file(&norm_public, &file.data);
+    }
 
-    // 2. Look inside launcher/ui/
+    // 2. Look inside launcher/ui/ (Disk first, then Embedded)
     let launcher_subpath = clean_path
         .strip_prefix("launcher/ui/")
         .or_else(|| clean_path.strip_prefix("launcher/"))
@@ -1549,12 +1569,20 @@ pub async fn static_fallback(
     if p_launcher.is_file() {
         return serve_file_from_disk(p_launcher).await;
     }
+    let norm_launcher = launcher_subpath.replace('\\', "/");
+    if let Some(file) = LauncherAssets::get(&norm_launcher) {
+        return serve_embedded_file(&norm_launcher, &file.data);
+    }
 
-    // 3. Allowed root icons
+    // 3. Allowed root icons (Disk first, then Embedded)
     if clean_path == "icon.png" || clean_path == "icon.ico" || clean_path == "favicon.ico" {
         let p_icon = base_dir.join(clean_path);
         if p_icon.is_file() {
             return serve_file_from_disk(p_icon).await;
+        }
+        let icon_name = if clean_path == "favicon.ico" { "icon.ico" } else { clean_path };
+        if let Some(file) = IconAssets::get(icon_name) {
+            return serve_embedded_file(icon_name, &file.data);
         }
     }
 
@@ -1569,7 +1597,14 @@ pub async fn static_fallback(
     }
 
     // 6. SPA fallback for client-side routing
-    serve_file_from_disk(base_dir.join("public/index.html")).await
+    let p_fallback = base_dir.join("public/index.html");
+    if p_fallback.is_file() {
+        serve_file_from_disk(p_fallback).await
+    } else if let Some(file) = PublicAssets::get("index.html") {
+        serve_embedded_file("index.html", &file.data)
+    } else {
+        (StatusCode::NOT_FOUND, "SPA fallback index.html not found").into_response()
+    }
 }
 
 // Window control handlers
