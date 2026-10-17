@@ -1,0 +1,99 @@
+{
+  "version": "4.0.0",
+  "name": "Default",
+  "canvas": {
+    "zoom": 1.0,
+    "pan": {
+      "x": 470.0,
+      "y": 144.0
+    }
+  },
+  "nodes": [
+    {
+      "id": "node_1792015267086",
+      "type": "trigger",
+      "title": "Global Trigger",
+      "position": {
+        "x": 370.0,
+        "y": 120.0
+      },
+      "data": {
+        "actionId": "1792015267086",
+        "enabled": true,
+        "triggerType": "keyboard",
+        "triggerValue": "1"
+      }
+    },
+    {
+      "id": "node_1792082280074",
+      "type": "step_log",
+      "title": "Log Message",
+      "position": {
+        "x": 710.0,
+        "y": 290.0
+      },
+      "data": {
+        "actionId": "1792082280074",
+        "enabled": true,
+        "message": "Test"
+      }
+    },
+    {
+      "id": "node_1792101444073",
+      "type": "format_text",
+      "title": "Format Text",
+      "position": {
+        "x": 690.0,
+        "y": 640.0
+      },
+      "data": {
+        "actionId": "1792101444073",
+        "boolFormat": "true_false",
+        "enabled": true,
+        "pins": [
+          "val_a"
+        ],
+        "separator": " ",
+        "template": "1 {val_a}"
+      }
+    },
+    {
+      "id": "node_1792101936730_3018",
+      "type": "format_text",
+      "title": "Format Text",
+      "position": {
+        "x": 380.0,
+        "y": 230.0
+      },
+      "data": {
+        "actionId": "1792101936730_3018",
+        "boolFormat": "true_false",
+        "enabled": true,
+        "pins": [],
+        "separator": " ",
+        "template": "2"
+      }
+    }
+  ],
+  "connections": [
+    {
+      "fromNodeId": "node_1792015267086",
+      "fromPort": "exec_out",
+      "toNodeId": "node_1792082280074",
+      "toPort": "exec_in"
+    },
+    {
+      "fromNodeId": "node_1792101444073",
+      "fromPort": "msg_out",
+      "toNodeId": "node_1792082280074",
+      "toPort": "msg_in"
+    },
+    {
+      "fromNodeId": "node_1792101936730_3018",
+      "fromPort": "msg_out",
+      "toNodeId": "node_1792101444073",
+      "toPort": "val_a"
+    }
+  ],
+  "variables": []
+}

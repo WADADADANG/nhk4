@@ -1,0 +1,11 @@
+/target
+*.zip
+*.tar.gz
+.DS_Store
+Thumbs.db
+node_modules/
+.vercel/
+/profiles_data/
+/cache/
+/screenshots/
+*.key

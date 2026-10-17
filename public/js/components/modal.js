@@ -1,0 +1,392 @@
+import { currentLang, TRANSLATIONS } from '../i18n.js';
+import { fullConfig, currentEditProfile, saveCurrentProfile, commitConfigToBackend } from '../state.js';
+import { escapeHtml } from '../cooldown.js';
+
+const USER_AGENT_POOL = [
+  "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+  "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36",
+  "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+  "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36 Edg/122.0.0.0",
+  "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36 Edg/121.0.0.0",
+  "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:123.0) Gecko/20100101 Firefox/123.0",
+  "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:122.0) Gecko/20100101 Firefox/122.0",
+  "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+  "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.3 Safari/605.1.15",
+  "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
+];
+
+function getClientSlots() {
+  const gs = fullConfig?.globalSettings || {};
+  if (Array.isArray(gs.clientSlots) && gs.clientSlots.length > 0) {
+    return gs.clientSlots;
+  }
+  return [1, 2, 3, 4, 5, 6, 7, 8];
+}
+
+export function openAntiDetectModal() {
+  const modal = document.getElementById('antidetect-modal');
+  const listContainer = document.getElementById('antidetect-client-list');
+  if (!modal || !listContainer) return;
+
+  const gs = fullConfig.globalSettings || {};
+  const aliases = gs.clientAliases || {};
+  const userAgents = gs.clientUserAgents || {};
+  const slots = getClientSlots();
+
+  listContainer.innerHTML = '';
+  for (const i of slots) {
+    const alias = aliases[String(i)] || `Client ${i}`;
+    const ua = userAgents[String(i)] || '';
+
+    const row = document.createElement('div');
+    row.style.display = 'flex';
+    row.style.flexDirection = 'column';
+    row.style.gap = '6px';
+    row.style.borderBottom = '1px dashed rgba(255,255,255,0.05)';
+    row.style.paddingBottom = '10px';
+
+    row.innerHTML = `
+      <div style="display:flex; justify-content:space-between; align-items:center; width:100%;">
+        <span style="font-size:12px; font-weight:700; color:var(--text);">${escapeHtml(alias)}</span>
+        <div style="display:flex; gap:6px;">
+          <button type="button" class="btn btn-ghost btn-random-ua" data-client-idx="${i}" style="padding:2px 8px; font-size:11px; border-color:#a855f7; color:#a855f7; background:rgba(168,85,247,0.05); height:24px; cursor:pointer;">🎲 Random</button>
+          <button type="button" class="btn btn-ghost btn-clear-ua" data-client-idx="${i}" style="padding:2px 8px; font-size:11px; border-color:var(--border); color:var(--muted); height:24px; cursor:pointer;">✕ Clear</button>
+        </div>
+      </div>
+      <input type="text" id="anti-ua-${i}" value="${escapeHtml(ua)}" placeholder="${currentLang === 'en' ? 'Default Browser User-Agent (Empty)' : 'ใช้ค่าเริ่มต้นของเบราว์เซอร์ (ค่าว่าง)'}"
+        style="background:var(--bg-input); border:1px solid var(--border); border-radius:6px; padding:6px 10px; color:var(--text); font-family:'JetBrains Mono'; font-size:11px; outline:none; width:100%; height:32px;">
+    `;
+    listContainer.appendChild(row);
+  }
+
+  listContainer.querySelectorAll('.btn-random-ua').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const idx = btn.getAttribute('data-client-idx');
+      randomizeUserAgent(idx);
+    });
+  });
+
+  listContainer.querySelectorAll('.btn-clear-ua').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const idx = btn.getAttribute('data-client-idx');
+      clearUserAgent(idx);
+    });
+  });
+
+  modal.classList.add('show');
+}
+
+export function closeAntiDetectModal() {
+  const modal = document.getElementById('antidetect-modal');
+  if (modal) modal.classList.remove('show');
+}
+
+export function randomizeUserAgent(idx) {
+  const input = document.getElementById(`anti-ua-${idx}`);
+  if (input) {
+    const rand = USER_AGENT_POOL[Math.floor(Math.random() * USER_AGENT_POOL.length)];
+    input.value = rand;
+  }
+}
+
+export function randomizeAllUserAgents() {
+  const slots = getClientSlots();
+  for (const i of slots) {
+    randomizeUserAgent(i);
+  }
+}
+
+export function clearUserAgent(idx) {
+  const input = document.getElementById(`anti-ua-${idx}`);
+  if (input) {
+    input.value = '';
+  }
+}
+
+export function saveAntiDetectSettings() {
+  if (!fullConfig.globalSettings) fullConfig.globalSettings = {};
+  const gs = fullConfig.globalSettings;
+  if (!gs.clientUserAgents) gs.clientUserAgents = {};
+
+  const slots = getClientSlots();
+  for (const i of slots) {
+    const input = document.getElementById(`anti-ua-${i}`);
+    if (input) {
+      gs.clientUserAgents[String(i)] = input.value.trim();
+    }
+  }
+
+  commitConfigToBackend().catch(() => {});
+  closeAntiDetectModal();
+  if (typeof window.toast === 'function') {
+    window.toast(TRANSLATIONS[currentLang].toastSavedAntiDetect || '✓ Saved Anti-Detect User-Agent settings!', 'success');
+  }
+}
+
+export function openProxyModal() {
+  const modal = document.getElementById('proxy-modal');
+  const listContainer = document.getElementById('proxy-client-list');
+  if (!modal || !listContainer) return;
+
+  const gs = fullConfig.globalSettings || {};
+  const aliases = gs.clientAliases || {};
+  const proxies = gs.clientProxies || {};
+  const trans = TRANSLATIONS[currentLang] || TRANSLATIONS.en;
+  const slots = getClientSlots();
+
+  listContainer.innerHTML = '';
+  for (const i of slots) {
+    const alias = aliases[String(i)] || `Client ${i}`;
+    const proxyVal = proxies[String(i)] || '';
+
+    const row = document.createElement('div');
+    row.style.display = 'flex';
+    row.style.flexDirection = 'column';
+    row.style.gap = '6px';
+    row.style.borderBottom = '1px dashed rgba(255,255,255,0.05)';
+    row.style.paddingBottom = '10px';
+
+    row.innerHTML = `
+      <div style="display:flex; justify-content:space-between; align-items:center; width:100%;">
+        <span style="font-size:12px; font-weight:700; color:var(--text);">${escapeHtml(alias)}</span>
+        <button type="button" class="btn btn-ghost btn-clear-proxy" data-client-idx="${i}" style="padding:2px 8px; font-size:11px; border-color:var(--border); color:var(--muted); height:24px; cursor:pointer;">✕ Clear</button>
+      </div>
+      <input type="text" id="proxy-input-${i}" value="${escapeHtml(proxyVal)}" placeholder="${trans.proxyInputPlaceholder || 'http://ip:port or socks5://ip:port or ip:port:user:pass'}"
+        style="background:var(--bg-input); border:1px solid var(--border); border-radius:6px; padding:6px 10px; color:var(--text); font-family:'JetBrains Mono'; font-size:11px; outline:none; width:100%; height:32px;">
+    `;
+    listContainer.appendChild(row);
+  }
+
+  listContainer.querySelectorAll('.btn-clear-proxy').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const idx = btn.getAttribute('data-client-idx');
+      clearProxy(idx);
+    });
+  });
+
+  modal.classList.add('show');
+}
+
+export function closeProxyModal() {
+  const modal = document.getElementById('proxy-modal');
+  if (modal) modal.classList.remove('show');
+}
+
+export function clearProxy(idx) {
+  const input = document.getElementById(`proxy-input-${idx}`);
+  if (input) input.value = '';
+}
+
+export function saveProxySettings() {
+  if (!fullConfig.globalSettings) fullConfig.globalSettings = {};
+  const gs = fullConfig.globalSettings;
+  if (!gs.clientProxies) gs.clientProxies = {};
+
+  const slots = getClientSlots();
+  for (const i of slots) {
+    const input = document.getElementById(`proxy-input-${i}`);
+    if (input) {
+      gs.clientProxies[String(i)] = input.value.trim();
+    }
+  }
+
+  commitConfigToBackend().catch(() => {});
+  closeProxyModal();
+  if (typeof window.toast === 'function') {
+    window.toast(TRANSLATIONS[currentLang].toastSavedProxy || '✓ Saved IP / Proxy settings!', 'success');
+  }
+}
+
+export function openClientSettingsModal(clientIdx) {
+  const modal = document.getElementById('client-settings-modal');
+  if (!modal) return;
+
+  const profile = fullConfig.profiles[currentEditProfile];
+  if (!profile) return;
+
+  const sIdx = String(clientIdx);
+  const gs = fullConfig.globalSettings || {};
+  const aliases = gs.clientAliases || {};
+  const userAgents = gs.clientUserAgents || {};
+  const proxies = gs.clientProxies || {};
+  const browsers = gs.clientBrowsers || {};
+  const customAlias = aliases[sIdx] || aliases[clientIdx];
+  const displayName = customAlias ? `Client ${clientIdx} (${customAlias})` : `Client ${clientIdx}`;
+
+  const ua = userAgents[sIdx] || userAgents[clientIdx] || '';
+  const proxyVal = proxies[sIdx] || proxies[clientIdx] || '';
+  const browserVal = browsers[sIdx] || browsers[clientIdx] || '1';
+
+  const titleEl = document.getElementById('client-settings-title');
+  if (titleEl) titleEl.textContent = `⚙️ ${displayName} Settings`;
+
+  const idxEl = document.getElementById('client-settings-idx');
+  if (idxEl) idxEl.value = sIdx;
+
+  const uaInput = document.getElementById('client-modal-ua-input');
+  if (uaInput) uaInput.value = ua;
+
+  const proxyInput = document.getElementById('client-modal-proxy-input');
+  if (proxyInput) proxyInput.value = proxyVal;
+
+  const browserSelect = document.getElementById('client-modal-browser-select');
+  if (browserSelect) browserSelect.value = browserVal;
+
+  // Window bounds info
+  const boundsInfoEl = document.getElementById('client-modal-bounds-info');
+  const bounds = gs.clientWindowBounds ? gs.clientWindowBounds[sIdx] : null;
+  if (boundsInfoEl) {
+    if (bounds && typeof bounds.x === 'number' && typeof bounds.y === 'number') {
+      boundsInfoEl.textContent = `X: ${bounds.x}, Y: ${bounds.y} (${bounds.w || '?'}x${bounds.h || '?'})`;
+      boundsInfoEl.style.color = '#38bdf8';
+    } else {
+      boundsInfoEl.textContent = 'Default (Auto / กลางจอหลัก)';
+      boundsInfoEl.style.color = '#94a3b8';
+    }
+  }
+
+  modal.classList.add('show');
+}
+
+export function resetClientModalWindowBounds() {
+  const idxEl = document.getElementById('client-settings-idx');
+  if (!idxEl) return;
+  const sIdx = idxEl.value;
+
+  if (fullConfig.globalSettings && fullConfig.globalSettings.clientWindowBounds) {
+    delete fullConfig.globalSettings.clientWindowBounds[sIdx];
+  }
+
+  const boundsInfoEl = document.getElementById('client-modal-bounds-info');
+  if (boundsInfoEl) {
+    boundsInfoEl.textContent = 'Default (Auto / กลางจอหลัก)';
+    boundsInfoEl.style.color = '#94a3b8';
+  }
+
+  saveCurrentProfile();
+  commitConfigToBackend().catch(() => {});
+
+  // Reposition live running client to primary display if active
+  fetch('/api/client/reset-bounds', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ clientIndex: parseInt(sIdx, 10) })
+  }).catch(() => {});
+
+  if (typeof window.toast === 'function') {
+    window.toast(`✓ Reset window position for Client ${sIdx} to primary screen!`, 'success');
+  }
+}
+
+export function closeClientSettingsModal() {
+  const modal = document.getElementById('client-settings-modal');
+  if (modal) modal.classList.remove('show');
+}
+
+export function randomizeClientModalUA() {
+  const uaInput = document.getElementById('client-modal-ua-input');
+  if (uaInput) {
+    const rand = USER_AGENT_POOL[Math.floor(Math.random() * USER_AGENT_POOL.length)];
+    uaInput.value = rand;
+  }
+}
+
+export function clearClientModalUA() {
+  const uaInput = document.getElementById('client-modal-ua-input');
+  if (uaInput) uaInput.value = '';
+}
+
+export function clearClientModalProxy() {
+  const proxyInput = document.getElementById('client-modal-proxy-input');
+  if (proxyInput) proxyInput.value = '';
+}
+
+export function saveClientSettingsModal() {
+  const idxEl = document.getElementById('client-settings-idx');
+  if (!idxEl) return;
+  const sIdx = idxEl.value;
+
+  if (!fullConfig.globalSettings) fullConfig.globalSettings = {};
+  const gs = fullConfig.globalSettings;
+  if (!gs.clientUserAgents) gs.clientUserAgents = {};
+  if (!gs.clientProxies) gs.clientProxies = {};
+  if (!gs.clientBrowsers) gs.clientBrowsers = {};
+
+  const uaInput = document.getElementById('client-modal-ua-input');
+  if (uaInput) gs.clientUserAgents[sIdx] = uaInput.value.trim();
+
+  const proxyInput = document.getElementById('client-modal-proxy-input');
+  if (proxyInput) gs.clientProxies[sIdx] = proxyInput.value.trim();
+
+  const browserSelect = document.getElementById('client-modal-browser-select');
+  if (browserSelect) gs.clientBrowsers[sIdx] = browserSelect.value;
+
+  commitConfigToBackend().catch(() => {});
+  closeClientSettingsModal();
+
+  if (typeof window.toast === 'function') {
+    window.toast(`✓ Saved settings for Client ${sIdx}`, 'success');
+  }
+}
+
+export async function clearClientModalProfileData() {
+  const idxEl = document.getElementById('client-settings-idx');
+  if (!idxEl) return;
+  const sIdx = idxEl.value;
+  const clientIndex = parseInt(sIdx, 10);
+  const clearBtn = document.getElementById('btn-client-modal-clear-profile');
+
+  const confirmMsg = currentLang === 'en'
+    ? `Are you sure you want to clear browser profile data for Client ${clientIndex}?\n\nThis will delete all cookies, cache, and login sessions for this client.`
+    : `คุณต้องการล้างข้อมูลโปรไฟล์ Browser ของ จอ ${clientIndex} ใช่หรือไม่?\n\nการกระทำนี้จะลบ Cookie, แคช และประวัติการล็อกอินเข้าเกมของจอนี้ทั้งหมด`;
+
+  const confirmed = await (window.showConfirm ? window.showConfirm({
+    title: currentLang === 'en' ? `Clear Browser Data (Client ${clientIndex})` : `ล้างข้อมูลโปรไฟล์ Browser (จอ ${clientIndex})`,
+    message: confirmMsg,
+    confirmText: currentLang === 'en' ? 'Clear Data' : 'ล้างข้อมูล',
+    cancelText: currentLang === 'en' ? 'Cancel' : 'ยกเลิก',
+    type: 'danger',
+    icon: '🗑️'
+  }) : Promise.resolve(confirm(confirmMsg)));
+
+  if (!confirmed) return;
+
+  try {
+    if (clearBtn) {
+      clearBtn.textContent = currentLang === 'en' ? '⏳ Clearing...' : '⏳ กำลังลบ...';
+    }
+
+    const res = await fetch('/api/client/clear-profile', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ clientIndex })
+    });
+    const data = await res.json();
+    if (data.success) {
+      if (typeof window.toast === 'function') {
+        window.toast(`✓ Cleared browser data for Client ${clientIndex}`, 'success');
+      }
+      if (clearBtn) {
+        clearBtn.textContent = currentLang === 'en' ? '✓ Cleared!' : '✓ ลบเรียบร้อย!';
+        setTimeout(() => {
+          clearBtn.textContent = '🗑️ ล้างข้อมูล Browser';
+        }, 2000);
+      }
+    } else {
+      if (typeof window.toast === 'function') {
+        window.toast(data.error || 'Failed to clear browser data', 'error');
+      } else if (typeof window.showAlert === 'function') {
+        window.showAlert({ title: 'ข้อผิดพลาด', message: data.error, icon: '✕' });
+      } else {
+        alert(data.error);
+      }
+      if (clearBtn) clearBtn.textContent = '🗑️ ล้างข้อมูล Browser';
+    }
+  } catch (err) {
+    if (typeof window.toast === 'function') {
+      window.toast('Error: ' + err.message, 'error');
+    }
+    if (clearBtn) clearBtn.textContent = '🗑️ ล้างข้อมูล Browser';
+  }
+}
+window.clearClientModalProfileData = clearClientModalProfileData;

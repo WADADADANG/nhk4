@@ -1,0 +1,346 @@
+:root {
+  --bg-overlay: rgba(15, 23, 42, 0.96);
+  --border-overlay: rgba(255, 255, 255, 0.12);
+  
+  --success: #10b981;
+  --danger: #ef4444;
+  --warning: #f59e0b;
+  --info: #3b82f6;
+  --cyan: #06b6d4;
+  --purple: #a855f7;
+  --text: #f8fafc;
+  --text-muted: #94a3b8;
+  --text-sub: #64748b;
+
+  --font-main: 'Inter', 'Prompt', system-ui, sans-serif;
+}
+
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+html, body {
+  background: transparent;
+  width: 100%;
+  height: auto;
+  min-height: 100%;
+  overflow: hidden;
+  font-family: var(--font-main);
+  user-select: none;
+}
+
+.overlay-container {
+  background: var(--bg-overlay);
+  backdrop-filter: blur(16px);
+  border: 1px solid var(--border-overlay);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.65);
+  border-radius: 8px;
+  width: 100%;
+  height: auto;
+  min-height: 50px;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+/* Header */
+.overlay-header {
+  height: 24px;
+  background: rgba(0, 0, 0, 0.45);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 8px;
+  flex-shrink: 0;
+  cursor: grab;
+  user-select: none;
+  -webkit-app-region: drag;
+}
+
+.overlay-header:active {
+  cursor: grabbing;
+}
+
+.header-left {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  cursor: grab;
+  -webkit-app-region: drag;
+}
+
+.header-right {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  -webkit-app-region: no-drag;
+}
+
+.overlay-logo {
+  font-size: 11px;
+}
+
+.overlay-title {
+  font-size: 11px;
+  font-weight: 700;
+  color: #f1f5f9;
+  letter-spacing: 0.3px;
+}
+
+.overlay-toggle-btn,
+.overlay-close-btn {
+  background: transparent;
+  border: none;
+  color: var(--text-muted);
+  font-size: 9px;
+  cursor: pointer;
+  width: 18px;
+  height: 16px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 3px;
+  transition: all 0.15s;
+  outline: none;
+  -webkit-app-region: no-drag; /* Clickable */
+}
+
+.overlay-toggle-btn:hover {
+  background: rgba(255, 255, 255, 0.1);
+  color: #fff;
+}
+
+.overlay-close-btn:hover {
+  background: #ef4444;
+  color: #ffffff;
+}
+
+/* Rows Container */
+.overlay-rows {
+  padding: 6px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  flex: 1;
+}
+
+.overlay-empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 6px 0;
+  color: var(--text-sub);
+  font-size: 11px;
+  font-weight: 600;
+  font-style: italic;
+}
+
+/* Compact Client Row */
+.client-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 3px 6px;
+  background: rgba(255, 255, 255, 0.03);
+  border-radius: 5px;
+  border: 1px solid rgba(255, 255, 255, 0.05);
+  transition: background 0.15s;
+  -webkit-app-region: no-drag;
+}
+
+.client-row.compact-mode.is-active {
+  cursor: pointer;
+}
+
+.client-row:hover {
+  background: rgba(255, 255, 255, 0.07);
+}
+
+.client-name {
+  font-size: 11px;
+  font-weight: 700;
+  color: #cbd5e1;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 90px;
+}
+
+.client-status-wrap {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.client-status {
+  font-size: 10px;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  white-space: nowrap;
+}
+
+.active-count-badge {
+  font-size: 9px;
+  font-weight: 800;
+  color: #38bdf8;
+  background: rgba(56, 189, 248, 0.15);
+  border: 1px solid rgba(56, 189, 248, 0.35);
+  padding: 1px 4px;
+  border-radius: 10px;
+  line-height: 1;
+}
+
+/* Expanded Tree View */
+.client-tree-group {
+  display: flex;
+  flex-direction: column;
+  background: rgba(0, 0, 0, 0.2);
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+.client-row.tree-header {
+  border-radius: 0;
+  border: none;
+  background: rgba(255, 255, 255, 0.04);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+  cursor: pointer;
+}
+
+.client-badge {
+  font-size: 9px;
+  font-weight: 700;
+  padding: 1px 5px;
+  border-radius: 4px;
+  text-transform: uppercase;
+}
+
+.client-badge.active {
+  background: rgba(16, 185, 129, 0.15);
+  color: #34d399;
+  border: 1px solid rgba(16, 185, 129, 0.3);
+}
+
+.client-sub-list {
+  display: flex;
+  flex-direction: column;
+  padding: 3px 6px;
+  gap: 2px;
+}
+
+.sub-action-item {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 10px;
+  font-weight: 600;
+  padding: 2px 4px;
+  border-radius: 4px;
+  transition: background 0.1s;
+}
+
+.sub-action-item:hover {
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.sub-tree-branch {
+  color: rgba(255, 255, 255, 0.25);
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 9px;
+}
+
+.sub-action-icon {
+  font-size: 10px;
+}
+
+.sub-action-name {
+  flex: 1;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: #e2e8f0;
+}
+
+.sub-action-detail {
+  font-size: 8.5px;
+  color: var(--text-muted);
+  font-family: 'JetBrains Mono', monospace;
+  background: rgba(0, 0, 0, 0.3);
+  padding: 1px 4px;
+  border-radius: 3px;
+}
+
+/* Status Colors & Highlights */
+.client-status.loop,
+.sub-action-item.loop .sub-action-name {
+  color: var(--success);
+}
+
+.client-status.scheduler,
+.sub-action-item.scheduler .sub-action-name {
+  color: #38bdf8;
+}
+
+.client-status.buff,
+.sub-action-item.buff .sub-action-name {
+  color: #60a5fa;
+}
+
+.client-status.forward,
+.sub-action-item.forward .sub-action-name {
+  color: var(--warning);
+}
+
+.client-status.sequencer,
+.sub-action-item.sequencer .sub-action-name {
+  color: #f59e0b;
+}
+
+.client-status.hold,
+.sub-action-item.hold .sub-action-name {
+  color: #a78bfa;
+}
+
+.client-status.scanner,
+.sub-action-item.scanner .sub-action-name {
+  color: #06b6d4;
+}
+
+.client-status.party,
+.sub-action-item.party .sub-action-name {
+  color: #14b8a6;
+}
+
+.client-status.heal,
+.sub-action-item.heal .sub-action-name {
+  color: #f43f5e;
+}
+
+.client-status.slot,
+.sub-action-item.slot .sub-action-name {
+  color: #a855f7;
+}
+
+.client-status.suspended,
+.client-status.paused,
+.sub-action-item.paused .sub-action-name {
+  color: var(--danger);
+}
+
+.client-status.standby,
+.sub-action-item.standby .sub-action-name {
+  color: #94a3b8;
+}
+
+.client-status.offline,
+.sub-action-item.offline .sub-action-name {
+  color: #64748b;
+}
+

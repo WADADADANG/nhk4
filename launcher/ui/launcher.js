@@ -1,0 +1,3842 @@
+// NodeHotkey Launcher Frontend Controller
+(function() {
+  const api = window.launcherAPI;
+  if (!api) {
+    console.error('launcherAPI is not available');
+    return;
+  }
+
+  // Dynamic Web Server Port
+  let currentServerPort = 3088;
+  let cachedConfig = null;
+  let cachedStatus = null;
+  function getServerUrl(path = '') {
+    const origin = (typeof window !== 'undefined' && window.location && window.location.origin && window.location.origin.startsWith('http'))
+      ? window.location.origin
+      : `http://localhost:${currentServerPort}`;
+    return `${origin}${path}`;
+  }
+
+  // Load global settings directly from disk via IPC on boot
+  async function initGlobalSettingsFromDisk() {
+    if (api && typeof api.getGlobalConfig === 'function') {
+      try {
+        const cfg = await api.getGlobalConfig();
+        if (cfg) {
+          if (!cachedConfig) cachedConfig = cfg;
+          else {
+            cachedConfig.globalSettings = cfg.globalSettings;
+            if (cfg.activeProfile) cachedConfig.activeProfile = cfg.activeProfile;
+            if (cfg.activeProfiles) cachedConfig.activeProfiles = cfg.activeProfiles;
+          }
+          if (cfg.globalSettings && cfg.globalSettings.webPort) {
+            const p = parseInt(cfg.globalSettings.webPort, 10);
+            if (!isNaN(p) && p > 0 && !isServerOnline) {
+              currentServerPort = p;
+            }
+          }
+          loadSettingsToUI(cfg);
+          if (cfg.activeProfiles && cfg.activeProfiles.length > 0) {
+            renderActiveProfiles(cfg.activeProfiles);
+          } else if (cfg.activeProfile) {
+            renderActiveProfiles([cfg.activeProfile]);
+          }
+        }
+      } catch (e) {
+        console.warn('initGlobalSettingsFromDisk error:', e);
+      }
+    }
+  }
+  initGlobalSettingsFromDisk();
+
+  // Navigation Tabs & Views
+  const tabNavDashboard = document.getElementById('tab-nav-dashboard') || document.getElementById('tab-nav-launcher');
+  const tabNavEditor = document.getElementById('tab-nav-editor');
+  const tabNavSettings = document.getElementById('tab-nav-settings');
+  const tabNavDocs = document.getElementById('tab-nav-docs');
+  const tabEditorDot = document.getElementById('tab-editor-dot');
+  
+  const viewDashboard = document.getElementById('view-dashboard') || document.getElementById('view-launcher');
+  const viewEditor = document.getElementById('view-editor');
+  const viewSettings = document.getElementById('view-settings');
+  const viewDocs = document.getElementById('view-docs');
+  const editorFrame = document.getElementById('editor-frame');
+  const btnSwitchToEditor = document.getElementById('btn-switch-to-editor');
+  let launcherDocsInstance = null;
+  
+  // Top Utilities
+  const btnLangTh = document.getElementById('btn-lang-th');
+  const btnLangEn = document.getElementById('btn-lang-en');
+
+  // DOM Elements (Controls)
+  const btnToggleEngine = document.getElementById('btn-toggle-engine');
+  const heroIcon = document.getElementById('hero-icon');
+  const heroTitle = document.getElementById('hero-title');
+  const heroSub = document.getElementById('hero-sub');
+  
+  const btnOpenLogs = document.getElementById('btn-open-logs');
+  const btnCheckUpdate = document.getElementById('btn-check-update');
+  const lblCheckUpdateText = document.getElementById('lbl-check-update-text');
+  const badgeUpdateCount = document.getElementById('badge-update-count');
+  const dotUpdatePulse = document.getElementById('dot-update-pulse');
+
+  let detectedUpdateInfo = null;
+  let currentUpdateCheck = null;
+  let currentDownloadResult = null;
+  let currentLicenseState = { isValid: false, status: 'Unlicensed' };
+
+  function renderEditorLicenseLocked() {
+    const iconEl = document.getElementById('lbl-offline-icon');
+    const headEl = document.getElementById('lbl-offline-head');
+    const descEl = document.getElementById('lbl-offline-desc');
+    const btnNormal = document.getElementById('btn-start-engine-from-studio');
+    const lockedActions = document.getElementById('editor-license-locked-actions');
+
+    const status = (currentLicenseState && currentLicenseState.status) ? currentLicenseState.status : 'Unlicensed';
+    const isSuspended = status.toLowerCase() === 'suspended';
+
+    if (iconEl) iconEl.textContent = isSuspended ? '🟡' : '🔒';
+    if (headEl) {
+      headEl.textContent = isSuspended
+        ? (currentLang === 'en' ? 'License Suspended (Temporarily Paused)' : 'สิทธิ์ถูกระงับชั่วคราว (License Suspended)')
+        : (currentLang === 'en' ? 'License Verification Required' : 'จำเป็นต้องลงทะเบียน License (License Required)');
+    }
+    if (descEl) {
+      descEl.textContent = isSuspended
+        ? (currentLang === 'en'
+            ? 'Your license has been suspended temporarily by the administrator. Please contact your administrator.'
+            : 'สิทธิ์การใช้งานของคุณถูกสั่งระงับชั่วคราวโดยผู้ดูแลระบบ กรุณาติดต่อผู้ดูแลระบบ')
+        : (currentLang === 'en'
+            ? 'Action Node Studio and bot execution are locked. Please enter a valid license key in Settings.'
+            : 'คุณยังไม่ได้รับอนุญาตให้เข้าใช้งาน Action Node Studio กรุณาเปิดใช้งานด้วย License Key ที่ถูกต้องในแท็บ Settings');
+    }
+    if (btnNormal) btnNormal.style.display = 'none';
+    if (lockedActions) lockedActions.style.display = 'flex';
+  }
+
+  function renderEditorOfflineNormal() {
+    const iconEl = document.getElementById('lbl-offline-icon');
+    const headEl = document.getElementById('lbl-offline-head');
+    const descEl = document.getElementById('lbl-offline-desc');
+    const btnNormal = document.getElementById('btn-start-engine-from-studio');
+    const lockedActions = document.getElementById('editor-license-locked-actions');
+    const t = i18nDict[currentLang] || i18nDict.th;
+
+    if (iconEl) iconEl.textContent = '🛑';
+    if (headEl) headEl.textContent = t.lblOfflineHead || 'Bot Engine is Offline';
+    if (descEl) descEl.textContent = t.lblOfflineDesc || 'Web Server and bot processes are stopped. Please start the engine below to use Action Node Studio.';
+    if (btnNormal) btnNormal.style.display = 'flex';
+    if (lockedActions) lockedActions.style.display = 'none';
+  }
+
+  function renderUpdateToolButton(hasUpdate, updateData) {
+    if (!btnCheckUpdate) return;
+    const t = i18nDict[currentLang] || i18nDict.th;
+
+    if (hasUpdate && updateData) {
+      btnCheckUpdate.classList.add('has-update');
+      if (lblCheckUpdateText) lblCheckUpdateText.textContent = t.btnUpdateHasNew || 'มีอัปเดตใหม่!';
+      if (badgeUpdateCount) {
+        const count = updateData.commitCount || (updateData.commitsList ? updateData.commitsList.length : 1);
+        badgeUpdateCount.textContent = count > 1 ? `${count} Commits` : 'New';
+        badgeUpdateCount.style.display = 'inline-flex';
+      }
+      if (dotUpdatePulse) dotUpdatePulse.style.display = 'inline-block';
+      btnCheckUpdate.title = t.btnUpdateTooltip || 'มีอัปเดตใหม่พร้อมใช้งาน! คลิกเพื่อดูรายละเอียดและติดตั้ง';
+      document.title = currentLang === 'en' ? '(✨ Update Available) NodeHotkey Studio Pro' : '(✨ มีอัปเดต) NodeHotkey Studio Pro';
+    } else {
+      btnCheckUpdate.classList.remove('has-update');
+      if (lblCheckUpdateText) lblCheckUpdateText.textContent = t.btnUpdate || 'Update';
+      if (badgeUpdateCount) badgeUpdateCount.style.display = 'none';
+      if (dotUpdatePulse) dotUpdatePulse.style.display = 'none';
+      btnCheckUpdate.title = currentLang === 'en' ? 'Check for system updates from GitHub' : 'ตรวจสอบการอัปเดตระบบจาก GitHub';
+      document.title = 'NodeHotkey Studio Pro';
+    }
+  }
+  
+  // Window Controls
+  const btnWinMin = document.getElementById('btn-win-min');
+  const btnWinMax = document.getElementById('btn-win-max');
+  const btnWinClose = document.getElementById('btn-win-close');
+
+  // Diagnostics Elements
+  const dotEngine = document.getElementById('dot-engine');
+  const valEngineStatus = document.getElementById('val-engine-status');
+  const subEngineInfo = document.getElementById('sub-engine-info');
+  
+  const dotServer = document.getElementById('dot-server');
+  const valServerStatus = document.getElementById('val-server-status');
+  const subServerInfo = document.getElementById('sub-server-info');
+  
+  const valProfileName = document.getElementById('val-profile-name');
+  const subProfileCount = document.getElementById('sub-profile-count');
+  const cardProfileStatus = document.getElementById('card-profile-status');
+  let cachedActiveProfiles = [];
+  let profileAutoScrollTimer = null;
+  let isHoveringProfileCard = false;
+
+  if (cardProfileStatus) {
+    cardProfileStatus.addEventListener('mouseenter', () => {
+      isHoveringProfileCard = true;
+    });
+    cardProfileStatus.addEventListener('mouseleave', () => {
+      isHoveringProfileCard = false;
+    });
+    // Allow mouse wheel anywhere on the card to smoothly scroll the active profiles list
+    cardProfileStatus.addEventListener('wheel', (e) => {
+      if (!valProfileName) return;
+      const listEl = valProfileName.querySelector('.active-profiles-list');
+      if (listEl && listEl.scrollHeight > listEl.clientHeight) {
+        listEl.scrollTop += e.deltaY;
+        e.preventDefault();
+      }
+    }, { passive: false });
+  }
+
+  function escapeHtml(str) {
+    return String(str || '')
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;');
+  }
+
+  function renderActiveProfiles(profiles) {
+    if (!valProfileName) return;
+    if (profileAutoScrollTimer) {
+      clearInterval(profileAutoScrollTimer);
+      profileAutoScrollTimer = null;
+    }
+
+    const list = Array.isArray(profiles) ? profiles.filter(p => p && typeof p === 'string' && p.trim()) : [];
+    cachedActiveProfiles = list;
+
+    const count = list.length;
+    const isEn = currentLang === 'en';
+
+    // Update subtitle count and scroll hint when list exceeds card view
+    if (subProfileCount) {
+      if (count === 0) {
+        subProfileCount.textContent = isEn ? '0 Active Profile' : 'ยังไม่ได้เปิดโปรไฟล์';
+      } else if (count === 1) {
+        subProfileCount.textContent = isEn ? '1 Active Profile' : 'เปิดใช้งาน 1 โปรไฟล์';
+      } else if (count === 2) {
+        subProfileCount.textContent = isEn ? '2 Active Profiles' : 'เปิดใช้งาน 2 โปรไฟล์';
+      } else {
+        subProfileCount.textContent = isEn ? `${count} Profiles (Scroll ▾)` : `เปิด ${count} โปรไฟล์ (เลื่อนดู ▾)`;
+      }
+    }
+
+    if (count === 0) {
+      valProfileName.innerHTML = `<span style="font-size:12px; font-weight:700; color:var(--text-dim);">-</span>`;
+      return;
+    }
+
+    if (count === 1) {
+      const p = list[0];
+      valProfileName.innerHTML = `
+        <div class="active-profile-item" style="font-size:12px;" title="${escapeHtml(p)}">
+          <span class="active-profile-bullet">▸</span>
+          <span class="active-profile-text" style="font-size:12px; font-weight:700; color:#fff;">${escapeHtml(p)}</span>
+        </div>
+      `;
+      return;
+    }
+
+    // 2 or more profiles: Keep readable font size (11.5px) in a scrollable list
+    const itemsHtml = list.map(p => `
+      <div class="active-profile-item" title="${escapeHtml(p)}">
+        <span class="active-profile-bullet">▸</span>
+        <span class="active-profile-text">${escapeHtml(p)}</span>
+      </div>
+    `).join('');
+
+    valProfileName.innerHTML = `
+      <div class="active-profiles-list">
+        ${itemsHtml}
+      </div>
+    `;
+
+    // When 3+ profiles exist, enable a subtle ticker auto-scroll when idle (pauses on hover)
+    if (count > 2) {
+      profileAutoScrollTimer = setInterval(() => {
+        if (isHoveringProfileCard) return;
+        const listEl = valProfileName.querySelector('.active-profiles-list');
+        if (!listEl) return;
+        if (listEl.scrollHeight <= listEl.clientHeight) return;
+
+        // Loop back smoothly to top if near bottom
+        if (listEl.scrollTop + listEl.clientHeight >= listEl.scrollHeight - 2) {
+          listEl.scrollTo({ top: 0, behavior: 'smooth' });
+        } else {
+          listEl.scrollBy({ top: 22, behavior: 'smooth' });
+        }
+      }, 3000);
+    }
+  }
+  
+  const valClientsCount = document.getElementById('val-clients-count');
+  const subClientsInfo = document.getElementById('sub-clients-info');
+
+  // Terminal Elements
+  const terminalBody = document.getElementById('terminal-body');
+  const logEntries = document.getElementById('log-entries');
+  const logSearchInput = document.getElementById('log-search-input');
+  const btnToggleAutoscroll = document.getElementById('btn-toggle-autoscroll');
+  const btnClearTerminal = document.getElementById('btn-clear-terminal');
+  const footerLogPath = document.getElementById('footer-log-path');
+  const logCounterBadge = document.getElementById('log-counter-badge');
+  const filterPills = document.querySelectorAll('.filter-pill');
+
+  // Update Modal Elements
+  const updateModal = document.getElementById('update-modal');
+  const updateModalBody = document.getElementById('update-modal-body');
+  const btnCloseUpdateModal = document.getElementById('btn-close-update-modal');
+  const btnCancelUpdate = document.getElementById('btn-cancel-update');
+  const btnPerformUpdate = document.getElementById('btn-perform-update');
+
+  // State
+  let currentView = 'dashboard';
+  let isRunning = false;
+  let isRestarting = false;
+  let autoScroll = true;
+  let currentFilter = 'all';
+  let searchQuery = '';
+  let totalLogs = 0;
+  let startTime = Date.now();
+  let uptimeInterval = null;
+  let isServerOnline = false;
+  let currentModalState = null;
+
+  // 1. Navigation View Switcher Logic
+  const breadcrumbEl = document.getElementById('view-breadcrumb-text');
+
+  function switchView(viewName) {
+    if (currentLicenseState && !currentLicenseState.isValid) {
+      const guardOverlay = document.getElementById('license-guard-overlay');
+      if (guardOverlay) guardOverlay.style.display = 'flex';
+      if (breadcrumbEl) breadcrumbEl.textContent = '🛡️ License Guard';
+      return;
+    }
+
+    currentView = viewName;
+    const t = i18nDict[currentLang] || i18nDict.th;
+    
+    // Deactivate all
+    if (tabNavDashboard) tabNavDashboard.classList.remove('active');
+    if (tabNavEditor) tabNavEditor.classList.remove('active');
+    if (tabNavSettings) tabNavSettings.classList.remove('active');
+    if (tabNavDocs) tabNavDocs.classList.remove('active');
+    if (viewDashboard) viewDashboard.classList.remove('active');
+    if (viewEditor) viewEditor.classList.remove('active');
+    if (viewSettings) viewSettings.classList.remove('active');
+    if (viewDocs) viewDocs.classList.remove('active');
+
+    const studioTopbarActions = document.getElementById('studio-topbar-actions');
+    const offlinePlaceholder = document.getElementById('editor-offline-placeholder');
+
+    if (viewName === 'dashboard') {
+      if (tabNavDashboard) tabNavDashboard.classList.add('active');
+      if (viewDashboard) viewDashboard.classList.add('active');
+      if (breadcrumbEl) breadcrumbEl.textContent = t.breadcrumbDashboard;
+      if (studioTopbarActions) studioTopbarActions.style.display = 'none';
+    } else if (viewName === 'editor') {
+      if (tabNavEditor) tabNavEditor.classList.add('active');
+      if (viewEditor) viewEditor.classList.add('active');
+      if (breadcrumbEl) breadcrumbEl.textContent = t.breadcrumbStudio;
+      if (studioTopbarActions) studioTopbarActions.style.display = 'flex';
+
+      // Check License & Server/Bot Engine status
+      const isLicValid = currentLicenseState && currentLicenseState.isValid;
+      if (!isLicValid) {
+        renderEditorLicenseLocked();
+        if (offlinePlaceholder) offlinePlaceholder.style.display = 'flex';
+        if (editorFrame && editorFrame.src && editorFrame.src !== 'about:blank') {
+          editorFrame.src = 'about:blank';
+        }
+      } else if (!isServerOnline) {
+        renderEditorOfflineNormal();
+        if (offlinePlaceholder) offlinePlaceholder.style.display = 'flex';
+      } else {
+        if (offlinePlaceholder) offlinePlaceholder.style.display = 'none';
+        const expectedOrigin = getServerUrl('');
+        const isFrameOriginMatching = editorFrame && editorFrame.src && (
+          editorFrame.src.startsWith(expectedOrigin) ||
+          editorFrame.src.startsWith(`http://localhost:${currentServerPort}`) ||
+          editorFrame.src.startsWith(`http://127.0.0.1:${currentServerPort}`)
+        );
+        if (editorFrame && (!editorFrame.src || editorFrame.src === 'about:blank' || !isFrameOriginMatching)) {
+          window.reloadEditorFrame();
+        } else if (editorFrame && editorFrame.contentWindow) {
+          try {
+            editorFrame.contentWindow.postMessage({ type: 'NODEHOTKEY_CHANGE_LANG', lang: currentLang }, '*');
+          } catch (e) {}
+          try {
+            if (typeof editorFrame.contentWindow.changeLang === 'function') {
+              editorFrame.contentWindow.changeLang(currentLang);
+            }
+          } catch (e) {}
+        }
+      }
+    } else if (viewName === 'settings') {
+      if (tabNavSettings) tabNavSettings.classList.add('active');
+      if (viewSettings) viewSettings.classList.add('active');
+      if (breadcrumbEl) breadcrumbEl.textContent = t.breadcrumbSettings;
+      if (studioTopbarActions) studioTopbarActions.style.display = 'none';
+      if (typeof refreshStorageStats === 'function') {
+        refreshStorageStats();
+      }
+    } else if (viewName === 'docs') {
+      if (tabNavDocs) tabNavDocs.classList.add('active');
+      if (viewDocs) viewDocs.classList.add('active');
+      if (breadcrumbEl) breadcrumbEl.textContent = t.breadcrumbDocs || (currentLang === 'en' ? 'Action Node Wiki & Reference' : 'คู่มือการใช้งาน Action Node (Wiki)');
+      if (studioTopbarActions) studioTopbarActions.style.display = 'none';
+
+      // Initialize or mount NodeDocsComponent if not already mounted
+      if (!launcherDocsInstance && window.NodeDocsComponent) {
+        const mountEl = document.getElementById('launcher-node-docs-mount');
+        if (mountEl) {
+          launcherDocsInstance = new window.NodeDocsComponent({
+            container: mountEl,
+            lang: currentLang,
+            showTitle: false
+          });
+        }
+      }
+    }
+  }
+
+  // Action Node Unsaved State & Safe Reload Controls
+  let isStudioDirty = false;
+  window.addEventListener('message', (e) => {
+    if (!e.data) return;
+    if (e.data.type === 'NODEHOTKEY_DIRTY_STATE') {
+      isStudioDirty = !!e.data.isDirty;
+    }
+  });
+
+  window.closeUnsavedReloadModal = function() {
+    const modal = document.getElementById('unsaved-reload-modal');
+    if (modal) modal.style.display = 'none';
+  };
+
+  window.forceDiscardAndReload = function() {
+    window.closeUnsavedReloadModal();
+    isStudioDirty = false;
+    if (editorFrame && editorFrame.contentWindow) {
+      try {
+        editorFrame.contentWindow.postMessage({ type: 'NODEHOTKEY_FORCE_RELOAD' }, '*');
+        return;
+      } catch (e) {}
+    }
+    if (editorFrame && isServerOnline) {
+      editorFrame.src = getServerUrl('/?t=' + Date.now());
+    }
+  };
+
+  window.reloadEditorFrame = function(bypassDirtyCheck = false) {
+    if (!editorFrame || !isServerOnline) return;
+
+    if (currentLicenseState && !currentLicenseState.isValid) {
+      if (editorFrame.src !== 'about:blank') editorFrame.src = 'about:blank';
+      return;
+    }
+
+    if (!bypassDirtyCheck && isStudioDirty) {
+      const modal = document.getElementById('unsaved-reload-modal');
+      if (modal) {
+        modal.style.display = 'flex';
+        return;
+      }
+    }
+
+    editorFrame.src = getServerUrl('/?t=' + Date.now());
+  };
+
+  window.openEditorInBrowser = function() {
+    if (api && api.openExternal) {
+      api.openExternal(getServerUrl('/'));
+    } else {
+      window.open(getServerUrl('/'), '_blank');
+    }
+  };
+
+  window.startBotFromStudio = async function() {
+    if (isRestarting) return;
+    if (currentLicenseState && !currentLicenseState.isValid) {
+      switchView('settings');
+      return;
+    }
+    setBtnLoading('Starting...');
+    await api.startBot();
+  };
+
+  if (tabNavDashboard) tabNavDashboard.onclick = () => switchView('dashboard');
+  if (tabNavEditor) tabNavEditor.onclick = () => switchView('editor');
+  if (tabNavSettings) tabNavSettings.onclick = () => switchView('settings');
+  if (tabNavDocs) tabNavDocs.onclick = () => switchView('docs');
+  if (btnSwitchToEditor) btnSwitchToEditor.onclick = () => switchView('editor');
+
+  // Language Toggle
+  if (btnLangTh) btnLangTh.onclick = () => applyLanguage('th');
+  if (btnLangEn) btnLangEn.onclick = () => applyLanguage('en');
+  // 2. Initialize Window Controls
+  if (btnWinMin) btnWinMin.onclick = () => api.minimizeWindow();
+  if (btnWinMax) btnWinMax.onclick = () => api.maximizeWindow();
+  if (btnWinClose) btnWinClose.onclick = () => api.closeWindow();
+
+  // 3. Multilingual Translations Dictionary (TH / EN)
+  const i18nDict = {
+    th: {
+      menuMain: "Workspace",
+      menuConfig: "Configuration",
+      menuDocs: "Documentation",
+      navDashboard: "Dashboard",
+      navActionNode: "Action Node",
+      navSettings: "Settings",
+      navDocs: "Node Wiki",
+      breadcrumbDashboard: "Dashboard & Clients",
+      breadcrumbStudio: "Action Node Studio",
+      breadcrumbSettings: "Settings",
+      breadcrumbDocs: "Node Wiki",
+      btnLogs: "Logs",
+      btnUpdate: "อัปเดต",
+      btnUpdateHasNew: "มีอัปเดตใหม่!",
+      btnUpdateTooltip: "มีอัปเดตใหม่พร้อมใช้งาน! คลิกเพื่อดูรายละเอียดและติดตั้ง",
+      diagEngineTitle: "สถานะโปรแกรม",
+      diagServerTitle: "Core Engine",
+      diagProfileTitle: "โปรไฟล์ที่เปิดใช้งาน",
+      diagClientsTitle: "จอเกมที่ตรวจพบ",
+      statusStarting: "กำลังเริ่ม...",
+      statusStopped: "🔴 หยุดทำงาน",
+      statusRunning: "🟢 กำลังทำงาน",
+      statusRestarting: "กำลังรีสตาร์ท...",
+      btnStartEngine: "เริ่มการทำงาน",
+      btnStopEngine: "หยุดการทำงาน",
+      matrixTitle: "CLIENT CONTROL MATRIX",
+      unitScreens: "จอ",
+      btnLaunchAll: "🚀 เปิดทุกจอ",
+      btnStopAll: "⏹️ ปิดทุกจอ",
+      btnLaunchAllLoading: "⏳ กำลังเปิดทุกจอ...",
+      cBtnLaunch: "➕ เปิดจอ",
+      cBtnLaunching: "⏳ กำลังเปิด...",
+      emptySlotLabel: "เพิ่มจอ {i}",
+      addNewSlotLabel: "เพิ่มจอใหม่ (จอ {nextSlot})",
+      cBtnPause: "⏸️ พักบอท",
+      cBtnPauseTitle: "หยุดการกดสกิลในจอนี้ชั่วคราว",
+      cBtnResume: "▶️ เปิดบอท",
+      cBtnResumeTitle: "เปิดการทำงานต่อสำหรับจอนี้",
+      cBadgeOffline: "OFFLINE",
+      cBadgeActive: "🟢 ทำงาน",
+      cBadgePaused: "🔴 พักบอท",
+      cAliasPlaceholder: "ตั้งชื่อจอ (เช่น Knight, RM)",
+      cAliasTitle: "คลิกเพื่อเปลี่ยนชื่อจอ",
+      cSettingsTitle: "ตั้งค่า Proxy, User-Agent, Browser",
+      cCloseTitle: "ปิดหน้าจอเกม",
+      delSlotModalTitle: "ยืนยันการลบช่องจอ",
+      delSlotModalDesc: "คุณต้องการลบช่อง <strong>Client {slot}</strong>{alias} ออกจากระบบใช่หรือไม่?",
+      delSlotModalHintHead: "ข้อมูลสำคัญ:",
+      delSlotModalHintText: "หลังลบ ตำแหน่งนี้จะกลายเป็นช่องว่าง <strong>[ ➕ เพิ่มจอ {slot} ]</strong> โดยจะไม่เปลี่ยนเลขประจำตัวของจออื่นๆ และคุณสามารถกดสร้างกลับมาใหม่เมื่อใดก็ได้",
+      delSlotModalCancel: "✕ ยกเลิก",
+      delSlotModalConfirm: "ยืนยันการลบ",
+      delSlotActiveAlert: "กรุณาปิดจอเกมก่อนทำการลบช่องจอ",
+      termTitle: "Console Output & Real-time Logs",
+      termSearchPlaceholder: "ค้นหา Logs...",
+      filterAll: "ทั้งหมด",
+      filterError: "🔴 Error",
+      filterWarn: "🟡 Warning",
+      filterAction: "🟣 Action",
+      filterLog: "🟢 Message Log",
+      filterStep: "🟢 Message Log",
+      btnAutoScroll: "⬇️ Auto-scroll",
+      btnClearTerm: "🗑️ ล้าง",
+      termToday: "📁 วันนี้: ",
+      settingEmergencyHead: "⌨️ Global Emergency Pause Hotkey",
+      settingEmergencyKey: "ปุ่มระงับการทำงานฉุกเฉิน",
+      settingEmergencyHead: "⌨️ Global Emergency Pause Hotkey",
+      settingEmergencyKey: "ปุ่มระงับการทำงานฉุกเฉิน",
+      settingEmergencyDesc: "กดเพื่อสั่งหยุดลูป คิวสกิล และปล่อยปุ่มค้างทั้งหมดในเกมทันที (คลิกที่กล่องเพื่อกดบันทึกปุ่มใหม่)",
+      settingOverlayHead: "🖥️ Desktop Overlay HUD",
+      settingOverlay: "เปิดใช้งาน Desktop Overlay HUD",
+      settingOverlayDesc: "แสดงแถบสถานะโปร่งแสงบนหน้าจอเกมแบบ Real-time (เปิด/ปิด อัตโนมัติตามบอท)",
+      settingGpuHead: "🚀 Hardware & GPU Acceleration",
+      settingGpuTitle: "เร่งความเร็วด้วยการ์ดจอแยก (High-Performance GPU / D3D11)",
+      settingGpuDesc: "บังคับให้เบราว์เซอร์ใช้การ์ดจอแยก (NVIDIA/AMD) และ Direct3D 11 Canvas Acceleration ช่วยลดโหลด CPU และลดอาการแลค",
+      settingJitterHead: "🛡️ Anti-Detect & Ghost Mouse Jitter",
+      settingJitter: "สุ่มหน่วงเวลาการกดปุ่มและขยับเมาส์ (Human Random Jitter)",
+      settingJitterDesc: "จำลองพฤติกรรมมนุษย์ด้วยการสุ่มขยับเมาส์เล็กน้อยและหน่วงเวลากดปุ่มเพื่อป้องกันการตรวจจับ",
+      settingJitterIntervalTitle: "⏱️ ช่วงเวลาสุ่มขยับเมาส์ (Interval Min - Max)",
+      settingJitterIntervalDesc: "ระบบจะสุ่มขยับเมาส์อัตโนมัติทุกๆ ช่วงเวลานี้ (หน่วยเป็น มิลลิวินาที / ms)",
+      settingJitterOffsetTitle: "🎯 ระยะการขยับพิกัดเมาส์ (Max Pixel Offset)",
+      settingJitterOffsetDesc: "ระยะทางพิกัดที่เมาส์จะสุ่มเคลื่อนที่รอบตำแหน่งเดิม (หน่วยเป็น พิกเซล / px)",
+      settingUrlHead: "🌐 Target Game URL Filter",
+      settingUrlTitle: "คีย์เวิร์ด URL สำหรับตรวจจับจอเกม",
+      settingUrlDesc: "ระบบจะค้นหาแท็บเบราว์เซอร์ที่มีคำนี้เพื่อเชื่อมต่อ CDP อัตโนมัติ",
+      settingPortHead: "🔌 Web Server & Dashboard Port",
+      settingPortTitle: "พอร์ตสำหรับ Web Dashboard & Studio",
+      settingPortDesc: "หมายเลข Port สำหรับ Web Server (ค่าเริ่มต้น: 3088 ป้องกันการชนกับพอร์ต 3000 ของโปรเจกต์อื่น)",
+      settingPortNote: "⚡ มีผลเมื่อ Stop แล้ว Start ใหม่ หรือกด Restart Bot Engine",
+      btnReloadStudio: "รีโหลด",
+      btnBrowserStudio: "เปิดในเบราว์เซอร์",
+      lblOfflineHead: "Bot Engine กำลังปิดอยู่ (Server Offline)",
+      lblOfflineDesc: "Web Server และระบบบอทยังไม่ได้เริ่มทำงาน กรุณากดปุ่มด้านล่างเพื่อเริ่มใช้งาน Action Node Studio",
+      lblOfflineBtn: "เริ่มการทำงาน Bot Engine",
+      modalSettingsTitle: "ตั้งค่า จอ {i} ({alias})",
+      modalBrowserLabel: "เบราว์เซอร์และโหมดแสดงผล",
+      modalOptChromeStd: "Google Chrome (Standard)",
+      modalOptChromeApp: "Google Chrome (App Mode)",
+      modalOptEdgeStd: "Microsoft Edge",
+      modalOptEdgeApp: "Microsoft Edge (App Mode)",
+      modalOptFirefox: "Mozilla Firefox",
+      modalUaLabel: "User-Agent (ป้องกันการตรวจจับ)",
+      modalUaRandom: "สุ่ม",
+      modalUaClear: "ล้าง",
+      modalUaPlaceholder: "ค่าเริ่มต้นของ Browser (เว้นว่างได้)",
+      modalProxyLabel: "การตั้งค่าเน็ตเวิร์ก / Proxy",
+      modalProxyClear: "ล้าง",
+      modalProxyHint: "แยก IP สำหรับแต่ละหน้าจอเพื่อความปลอดภัยในการเชื่อมต่อ",
+      modalBoundsTitle: "ตำแหน่งและขอบเขตหน้าต่าง",
+      modalBoundsResetBtn: "รีเซ็ตตำแหน่ง",
+      modalBoundsCoordLabel: "พิกัดหน้าต่าง:",
+      modalBoundsDefaultText: "Default (Auto / กลางจอหลัก)",
+      modalBoundsHint: "รีเซ็ตตำแหน่งหน้าต่างกลับมาตรงกลางจอหลัก หากหน้าต่างเกมหลุดออกนอกจอ",
+      modalBoundsResetDone: "✓ รีเซ็ตแล้ว",
+      modalClearProfileTitle: "แคชและโปรไฟล์เบราว์เซอร์",
+      modalClearProfileDesc: "ล้าง Cookie, แคช และประวัติการล็อกอินของจอนี้",
+      modalClearProfileBtn: "ล้างข้อมูล",
+      modalClearProfileDone: "✓ ล้างเรียบร้อย",
+      modalClearProfileActiveAlert: "กรุณาปิดหน้าต่างเกมของ จอ {i} ก่อนทำการล้างข้อมูล Browser",
+      modalClearProfileConfirm: "คุณต้องการล้างข้อมูลโปรไฟล์ Browser ของ จอ {i} ใช่หรือไม่?\n\nการกระทำนี้จะลบ Cookie, แคช และประวัติการล็อกอินเข้าเกมของจอนี้ทั้งหมด",
+      modalCancelBtn: "ยกเลิก",
+      modalSaveBtn: "บันทึกการตั้งค่า",
+      unsavedModalTitle: "ตรวจพบการแก้ไขที่ยังไม่ได้บันทึก",
+      unsavedModalDesc: "คุณมีการแก้ไขผังในหน้า <strong>Action Node Studio</strong> ที่ยังไม่ได้กดบันทึก!<br/>หากทำการรีโหลดในตอนนี้ ข้อมูลที่คุณเพิ่งแก้ไขจะสูญหายทันที",
+      unsavedModalHintTitle: "คำแนะนำ:",
+      unsavedModalHintDesc: "กดปุ่ม <strong>\"ปิด เพื่อกลับไปบันทึกเอง\"</strong> ด้านล่าง แล้วกดปุ่ม 💾 บันทึก (หรือ Ctrl+S) ในหน้า Action Node ก่อนที่จะรีโหลดครับ",
+      unsavedModalDiscardBtn: "🔄 ละทิ้งและรีโหลด",
+      unsavedModalBackBtn: "✕ ปิด เพื่อกลับไปบันทึกเอง",
+      modalUpdateTitle: "ตรวจสอบการอัปเดตระบบ",
+      btnUpdateChecking: "กำลังตรวจสอบสถานะและวิเคราะห์ผลกระทบจาก GitHub...",
+      btnUpdateCheckErr: "เกิดข้อผิดพลาดในการตรวจสอบ:",
+      btnUpdateNoUpdate: "ระบบเป็นเวอร์ชันล่าสุดแล้ว!",
+      btnUpdateNoUpdateDesc: "Current Commit: <code>{hash}</code> (เป็นเวอร์ชันล่าสุดแล้ว)",
+      btnUpdateHasNewTitle: "มีอัปเดตใหม่พร้อมใช้งาน!",
+      btnUpdateDepTitle: "ระบบพร้อมติดตั้ง Library ใหม่อัตโนมัติ",
+      btnUpdateDepDesc: "ตรวจพบโมดูลระบบใหม่ ตัวโปรแกรมจะทำการดาวน์โหลดและติดตั้ง Library ใหม่ให้พร้อมใช้งานอัตโนมัติใน Step 2 โดยที่คุณไม่ต้องดาวน์โหลดหรือติดตั้งโปรแกรมใหม่เอง",
+      btnUpdateImpactLabel: "ผลกระทบ:",
+      btnUpdateLevelLabel: "ระดับการอัปเดต:",
+      btnUpdateFilesLabel: "ไฟล์ที่เปลี่ยนแปลงทั้งหมด:",
+      btnUpdateFilesMore: "... และอีก {count} ไฟล์",
+      btnUpdateDownloading: "กำลังดาวน์โหลดแพ็คเกจและจัดเตรียมความพร้อม...",
+      btnUpdateDownloadComplete: "ดาวน์โหลดแพ็คเกจเสร็จสิ้น!",
+      btnUpdateDownloadCompleteDesc: "แพ็คเกจถูกเตรียมพร้อมสำหรับการติดตั้งแล้ว คุณสามารถกดปุ่มด้านล่างเพื่อเริ่มการติดตั้งทับไฟล์ live ในระบบได้ทันที",
+      btnUpdateDownloadFailed: "การดาวน์โหลดล้มเหลว:",
+      btnUpdateApplying: "กำลังแตกไฟล์และเขียนทับข้อมูลเวอร์ชันใหม่...",
+      btnUpdateApplyFailed: "การติดตั้งล้มเหลว:",
+      btnUpdateCoreComplete: "ติดตั้งระบบหลักเสร็จสมบูรณ์!",
+      btnUpdateCoreCompleteDesc: "มีการเปลี่ยนแปลงในไฟล์ระบบหลัก (Core Launcher) จำเป็นต้องรีสตาร์ทตัวโปรแกรมเพื่อให้การตั้งค่าใหม่มีผล",
+      btnUpdateCoreDepSuccess: "ติดตั้งโมดูลใหม่สำเร็จ: ระบบได้ติดตั้ง Library ที่จำเป็นเรียบร้อยแล้ว เมื่อรีสตาร์ทโปรแกรมจะพร้อมใช้งานได้ทันที",
+      btnUpdateEngineComplete: "อัปเดต Bot Engine เรียบร้อย!",
+      btnUpdateEngineCompleteDesc: "ไฟล์คำสั่งและตรรกะของบอทได้รับการอัปเดตแล้ว คุณต้องการรีสตาร์ท Bot Engine ตอนนี้เลยหรือไม่? (หน้าจอเกมจะคงอยู่)",
+      btnUpdateUiComplete: "Hot-Reload สำเร็จสมบูรณ์!",
+      btnUpdateUiCompleteDesc: "หน้าจอ UI และ Web Dashboard ได้รับการรีเฟรชเป็นเวอร์ชันใหม่เรียบร้อยแล้ว — <strong>บอทและหน้าจอเกมทุกจอทำงานต่อเนื่อง 100% ไม่มีการปิดจอ</strong>",
+      btnStep1Download: "📥 Step 1: ดาวน์โหลดแพ็คเกจ",
+      btnStep2Apply: "⚡ Step 2: เริ่มการติดตั้งไฟล์",
+      btnRelaunchApp: "🚀 รีสตาร์ทโปรแกรมทันที",
+      btnRestartEngineNow: "🔄 รีสตาร์ท Engine เดี๋ยวนี้",
+      btnLater: "เลื่อนไปก่อน",
+      btnRestartLater: "⏳ รีสตาร์ทเองภายหลัง",
+      btnDone: "เสร็จสิ้น",
+      btnCancel: "ยกเลิก",
+      btnClose: "ปิด",
+      settingStorageHead: "🧹 Storage & Data Cleanup",
+      settingStorageDesc: "จัดการพื้นที่จัดเก็บข้อมูลไฟล์บันทึก (Logs) และไฟล์แคปหน้าจอตรวจสอบผล (Screenshots)",
+      storageLogsTitle: "System Logs",
+      storageShotsTitle: "Screenshots",
+      storageOpenFolder: "เปิดโฟลเดอร์",
+      storageClear: "ล้าง",
+      storageTotalTitle: "พื้นที่จัดเก็บรวม:",
+      storageClearAll: "ล้างข้อมูลทั้งหมด (Logs + Screenshots)",
+      storageModalTitle: "ยืนยันการล้างข้อมูล",
+      storageModalConfirm: "ยืนยันการลบ",
+      storageModalCancel: "✕ ยกเลิก",
+      storageModalWarnHead: "คำเตือน:",
+      storageModalWarnText: "ไฟล์จะถูกลบถาวรออกจากเครื่องและไม่สามารถกู้คืนได้ (โฟลเดอร์หลักจะยังคงอยู่และระบบจะสร้างไฟล์ใหม่อัตโนมัติเมื่อมีการบันทึก)"
+    },
+    en: {
+      menuMain: "Main Workspace",
+      menuConfig: "Configuration",
+      menuDocs: "Documentation",
+      navDashboard: "Dashboard",
+      navActionNode: "Action Node",
+      navSettings: "Settings",
+      navDocs: "Node Wiki",
+      breadcrumbDashboard: "Dashboard & Clients",
+      breadcrumbStudio: "Action Node Studio",
+      breadcrumbSettings: "Settings",
+      breadcrumbDocs: "Node Wiki",
+      btnLogs: "Logs",
+      btnUpdate: "Update",
+      btnUpdateHasNew: "Update Available!",
+      btnUpdateTooltip: "New update available! Click to inspect and install",
+      diagEngineTitle: "SYSTEM STATUS",
+      diagServerTitle: "CORE ENGINE",
+      diagProfileTitle: "ACTIVE PROFILES",
+      diagClientsTitle: "DETECTED CLIENTS",
+      statusStarting: "Starting...",
+      statusStopped: "🔴 Stopped",
+      statusRunning: "🟢 Running",
+      statusRestarting: "Restarting...",
+      btnStartEngine: "Start Bot Engine",
+      btnStopEngine: "Stop Bot Engine",
+      matrixTitle: "CLIENT CONTROL MATRIX",
+      unitScreens: "Clients",
+      btnLaunchAll: "🚀 Launch All",
+      btnStopAll: "⏹️ Stop All",
+      btnLaunchAllLoading: "⏳ Launching All...",
+      cBtnLaunch: "➕ Launch",
+      cBtnLaunching: "⏳ Launching...",
+      emptySlotLabel: "Add Client {i}",
+      addNewSlotLabel: "Add New Client ({nextSlot})",
+      cBtnPause: "⏸️ Pause",
+      cBtnPauseTitle: "Temporarily pause skills for this client",
+      cBtnResume: "▶️ Resume",
+      cBtnResumeTitle: "Resume skills for this client",
+      cBadgeOffline: "OFFLINE",
+      cBadgeActive: "🟢 ACTIVE",
+      cBadgePaused: "🔴 PAUSED",
+      cAliasPlaceholder: "Alias (e.g. Knight, RM)",
+      cAliasTitle: "Click to rename client alias",
+      cSettingsTitle: "Proxy, User-Agent, Browser Settings",
+      cCloseTitle: "Close Game Window",
+      delSlotModalTitle: "Confirm Delete Client Slot",
+      delSlotModalDesc: "Are you sure you want to delete <strong>Client {slot}</strong>{alias}?",
+      delSlotModalHintHead: "Important:",
+      delSlotModalHintText: "After deletion, this position will become an empty slot placeholder <strong>[ ➕ Add Client {slot} ]</strong> without shifting other client IDs, and you can recreate it at any time.",
+      delSlotModalCancel: "✕ Cancel",
+      delSlotModalConfirm: "Delete Slot",
+      delSlotActiveAlert: "Please close the client window before deleting this slot.",
+      termTitle: "Console Output & Real-time Logs",
+      termSearchPlaceholder: "Search logs...",
+      filterAll: "All",
+      filterError: "🔴 Error",
+      filterWarn: "🟡 Warning",
+      filterAction: "🟣 Action",
+      filterLog: "🟢 Message Log",
+      filterStep: "🟢 Message Log",
+      btnAutoScroll: "⬇️ Auto-scroll",
+      btnClearTerm: "🗑️ Clear",
+      termToday: "📁 Today: ",
+      settingEmergencyHead: "⌨️ Global Emergency Pause Hotkey",
+      settingEmergencyKey: "Emergency Pause Hotkey",
+      settingEmergencyDesc: "Instantly release all keys, pause loops, and cancel skill queues in game (Click box to record new key)",
+      settingOverlayHead: "🖥️ Desktop Overlay HUD",
+      settingOverlay: "Enable Desktop Status Overlay",
+      settingOverlayDesc: "Render transparent real-time status overlay HUD over game clients",
+      settingGpuHead: "🚀 Hardware & GPU Acceleration",
+      settingGpuTitle: "High-Performance GPU Acceleration (Discrete GPU / D3D11)",
+      settingGpuDesc: "Force browsers to use dedicated discrete GPU (NVIDIA/AMD) and Direct3D 11 Canvas Acceleration to reduce CPU load and eliminate lag",
+      settingJitterHead: "🛡️ Anti-Detect & Ghost Mouse Jitter",
+      settingJitter: "Human Random Jitter (Anti-Detect)",
+      settingJitterDesc: "Add natural ±15ms human jitter and subtle mouse shifts to prevent bot detection",
+      settingJitterIntervalTitle: "⏱️ Random Jitter Interval (Min - Max)",
+      settingJitterIntervalDesc: "Subtle mouse shifts will trigger randomly between this time window (in ms)",
+      settingJitterOffsetTitle: "🎯 Max Pixel Offset",
+      settingJitterOffsetDesc: "Maximum random pixel distance around current cursor position (in px)",
+      settingUrlHead: "🌐 Target Game URL Filter",
+      settingUrlTitle: "Target URL Keyword for Game Screen Detection",
+      settingUrlDesc: "CDP scanner will search for tabs matching this keyword to bind automatically",
+      settingPortHead: "🔌 Web Server & Dashboard Port",
+      settingPortTitle: "Web Dashboard & Studio Port",
+      settingPortDesc: "Port number for the internal web server (Default: 3088 to avoid port 3000 collisions with other dev projects)",
+      settingPortNote: "⚡ Takes effect after Restarting or Stopping & Starting the Bot Engine",
+      btnReloadStudio: "Reload",
+      btnBrowserStudio: "Browser",
+      lblOfflineHead: "Bot Engine is Offline",
+      lblOfflineDesc: "Web Server and bot processes are stopped. Please start the engine below to use Action Node Studio.",
+      lblOfflineBtn: "Start Bot Engine Now",
+      modalSettingsTitle: "Client {i} Settings ({alias})",
+      modalBrowserLabel: "Browser Engine & Mode",
+      modalOptChromeStd: "Google Chrome (Standard)",
+      modalOptChromeApp: "Google Chrome (App Mode)",
+      modalOptEdgeStd: "Microsoft Edge",
+      modalOptEdgeApp: "Microsoft Edge (App Mode)",
+      modalOptFirefox: "Mozilla Firefox",
+      modalUaLabel: "User-Agent (Anti-Detect)",
+      modalUaRandom: "Random",
+      modalUaClear: "Clear",
+      modalUaPlaceholder: "Default Browser User-Agent (Empty)",
+      modalProxyLabel: "Network / Proxy Settings",
+      modalProxyClear: "Clear",
+      modalProxyHint: "Isolate IP per client screen for connection security",
+      modalBoundsTitle: "Window Position & Bounds",
+      modalBoundsResetBtn: "Reset Position",
+      modalBoundsCoordLabel: "Window Coordinates:",
+      modalBoundsDefaultText: "Default (Auto)",
+      modalBoundsHint: "Reset window position to the center of the primary display if off-screen",
+      modalBoundsResetDone: "✓ Reset Done",
+      modalClearProfileTitle: "Browser Cache & Profile",
+      modalClearProfileDesc: "Clear cookies, cache, and login session for this client",
+      modalClearProfileBtn: "Clear Data",
+      modalClearProfileDone: "✓ Cleared",
+      modalClearProfileActiveAlert: "Please close the game window for Client {i} before clearing its browser data.",
+      modalClearProfileConfirm: "Are you sure you want to clear browser profile data for Client {i}?\n\nThis will delete all saved cookies, cache, and login sessions for this client.",
+      modalCancelBtn: "Cancel",
+      modalSaveBtn: "Save Settings",
+      unsavedModalTitle: "Unsaved Changes Detected",
+      unsavedModalDesc: "You have unsaved changes in <strong>Action Node Studio</strong>!<br/>Reloading right now will discard all your pending changes.",
+      unsavedModalHintTitle: "Recommendation:",
+      unsavedModalHintDesc: "Click <strong>\"Close to Save Manually\"</strong> below, then click 💾 Save Profile (or press Ctrl+S) in Action Node before reloading.",
+      unsavedModalDiscardBtn: "🔄 Discard & Reload",
+      unsavedModalBackBtn: "✕ Close to Save Manually",
+      modalUpdateTitle: "System Update",
+      btnUpdateChecking: "Checking update status and analyzing impact from GitHub...",
+      btnUpdateCheckErr: "Error checking for updates:",
+      btnUpdateNoUpdate: "System is up to date!",
+      btnUpdateNoUpdateDesc: "Current Commit: <code>{hash}</code> (Up to date)",
+      btnUpdateHasNewTitle: "Update Available!",
+      btnUpdateDepTitle: "Automatic Library & Module Installation",
+      btnUpdateDepDesc: "New system modules detected. The launcher will automatically download and install required dependencies in Step 2 with no manual reinstall needed.",
+      btnUpdateImpactLabel: "Impact:",
+      btnUpdateLevelLabel: "Update Level:",
+      btnUpdateFilesLabel: "Total Changed Files:",
+      btnUpdateFilesMore: "... and {count} more files",
+      btnUpdateDownloading: "Downloading update package and preparing...",
+      btnUpdateDownloadComplete: "Package Download Complete!",
+      btnUpdateDownloadCompleteDesc: "The update package is ready for installation. Click the button below to apply the update directly to the live system.",
+      btnUpdateDownloadFailed: "Download Failed:",
+      btnUpdateApplying: "Extracting files and applying update...",
+      btnUpdateApplyFailed: "Installation Failed:",
+      btnUpdateCoreComplete: "Core System Update Complete!",
+      btnUpdateCoreCompleteDesc: "Core Launcher system files have been modified. A full application restart is required for changes to take effect.",
+      btnUpdateCoreDepSuccess: "Dependencies Installed: Required libraries were installed successfully and will be loaded upon restart.",
+      btnUpdateEngineComplete: "Bot Engine Updated!",
+      btnUpdateEngineCompleteDesc: "Bot logic and scripts have been updated. Would you like to restart the Bot Engine now? (Active game clients remain running)",
+      btnUpdateUiComplete: "Hot-Reload Complete!",
+      btnUpdateUiCompleteDesc: "UI and Web Dashboard have been refreshed to the latest version — <strong>Bots and game clients continue running 100% uninterrupted.</strong>",
+      btnStep1Download: "📥 Step 1: Download Package",
+      btnStep2Apply: "⚡ Step 2: Apply Update",
+      btnRelaunchApp: "🚀 Restart App Now",
+      btnRestartEngineNow: "🔄 Restart Engine Now",
+      btnLater: "Later",
+      btnRestartLater: "⏳ Restart Later",
+      btnDone: "Done",
+      btnCancel: "Cancel",
+      btnClose: "Close",
+      settingStorageHead: "🧹 Storage & Data Cleanup",
+      settingStorageDesc: "Manage disk space occupied by system logs and vision diagnostics screenshots",
+      storageLogsTitle: "System Logs",
+      storageShotsTitle: "Screenshots",
+      storageOpenFolder: "Open Folder",
+      storageClear: "Clear",
+      storageTotalTitle: "Total Storage:",
+      storageClearAll: "Clear All (Logs + Screenshots)",
+      storageModalTitle: "Confirm Data Cleanup",
+      storageModalConfirm: "Confirm Delete",
+      storageModalCancel: "✕ Cancel",
+      storageModalWarnHead: "Warning:",
+      storageModalWarnText: "Files will be permanently deleted from disk and cannot be restored. (Root folders remain and fresh files will be generated on new logs)"
+    }
+  };
+
+  let currentLang = localStorage.getItem('nodehotkey_lang') || 'th';
+
+  function updateClientSettingsModalTexts(lang) {
+    const t = i18nDict[lang] || i18nDict.th;
+    const lblBrowser = document.getElementById('lbl-modal-browser-title');
+    const optChromeStd = document.getElementById('opt-browser-chrome-std');
+    const optChromeApp = document.getElementById('opt-browser-chrome-app');
+    const optEdgeStd = document.getElementById('opt-browser-edge-std');
+    const optEdgeApp = document.getElementById('opt-browser-edge-app');
+    const optFirefox = document.getElementById('opt-browser-firefox');
+    const lblUa = document.getElementById('lbl-modal-ua-title');
+    const btnRandomUa = document.getElementById('btn-modal-random-ua');
+    const btnClearUa = document.getElementById('btn-modal-clear-ua');
+    const inputUa = document.getElementById('modal-client-ua');
+    const lblProxy = document.getElementById('lbl-modal-proxy-title');
+    const btnClearProxy = document.getElementById('btn-modal-clear-proxy');
+    const lblProxyDesc = document.getElementById('lbl-modal-proxy-desc');
+    const lblBounds = document.getElementById('lbl-modal-bounds-title');
+    const btnResetBounds = document.getElementById('btn-modal-reset-bounds');
+    const lblBoundsCoord = document.getElementById('lbl-modal-bounds-coord');
+    const lblBoundsHint = document.getElementById('lbl-modal-bounds-hint');
+    const lblClearProfile = document.getElementById('lbl-modal-clear-profile-title');
+    const lblClearProfileDesc = document.getElementById('lbl-modal-clear-profile-desc');
+    const btnClearProfile = document.getElementById('btn-modal-clear-profile');
+    const btnCancel = document.getElementById('btn-modal-settings-cancel');
+    const btnSave = document.getElementById('btn-modal-settings-save');
+
+    if (lblBrowser) lblBrowser.textContent = t.modalBrowserLabel;
+    if (optChromeStd) optChromeStd.textContent = t.modalOptChromeStd;
+    if (optChromeApp) optChromeApp.textContent = t.modalOptChromeApp;
+    if (optEdgeStd) optEdgeStd.textContent = t.modalOptEdgeStd;
+    if (optEdgeApp) optEdgeApp.textContent = t.modalOptEdgeApp;
+    if (optFirefox) optFirefox.textContent = t.modalOptFirefox;
+    if (lblUa) lblUa.textContent = t.modalUaLabel;
+    if (btnRandomUa) btnRandomUa.textContent = t.modalUaRandom;
+    if (btnClearUa) btnClearUa.textContent = t.modalUaClear;
+    if (inputUa) inputUa.placeholder = t.modalUaPlaceholder;
+    if (lblProxy) lblProxy.textContent = t.modalProxyLabel;
+    if (btnClearProxy) btnClearProxy.textContent = t.modalProxyClear;
+    if (lblProxyDesc) lblProxyDesc.textContent = t.modalProxyHint;
+    if (lblBounds) lblBounds.textContent = t.modalBoundsTitle;
+    if (btnResetBounds) btnResetBounds.textContent = t.modalBoundsResetBtn;
+    if (lblBoundsCoord) lblBoundsCoord.textContent = t.modalBoundsCoordLabel;
+    if (lblBoundsHint) lblBoundsHint.textContent = t.modalBoundsHint;
+    if (lblClearProfile) lblClearProfile.textContent = t.modalClearProfileTitle;
+    if (lblClearProfileDesc) lblClearProfileDesc.textContent = t.modalClearProfileDesc;
+    if (btnClearProfile) btnClearProfile.textContent = t.modalClearProfileBtn;
+    if (btnCancel) btnCancel.textContent = t.modalCancelBtn;
+    if (btnSave) btnSave.textContent = t.modalSaveBtn;
+
+    const modal = document.getElementById('client-settings-modal');
+    if (modal && modal.style.display === 'flex') {
+      const idxInput = document.getElementById('modal-client-idx');
+      if (idxInput && idxInput.value) {
+        const clientIdx = parseInt(idxInput.value, 10);
+        const gs = (cachedConfig && cachedConfig.globalSettings) || {};
+        const aliases = gs.clientAliases || {};
+        const defaultAlias = lang === 'en' ? `Client ${clientIdx}` : `จอ ${clientIdx}`;
+        const alias = aliases[String(clientIdx)] || defaultAlias;
+        const nameSpan = document.getElementById('client-settings-modal-name');
+        if (nameSpan) {
+          nameSpan.textContent = t.modalSettingsTitle.replace('{i}', clientIdx).replace('{alias}', alias);
+        }
+        const boundsInfo = document.getElementById('modal-client-bounds-info');
+        const boundsMap = gs.clientWindowBounds || {};
+        const bounds = boundsMap[String(clientIdx)];
+        if (boundsInfo && (!bounds || typeof bounds.x !== 'number')) {
+          boundsInfo.textContent = t.modalBoundsDefaultText;
+        }
+      }
+    }
+  }
+
+  function applyLanguage(lang) {
+    currentLang = lang;
+    try {
+      localStorage.setItem('nodehotkey_lang', lang);
+      localStorage.setItem('lang', lang);
+    } catch (e) {}
+    const t = i18nDict[lang] || i18nDict.th;
+    updateClientSettingsModalTexts(lang);
+    
+    // Update breadcrumbs
+    if (breadcrumbEl) {
+      if (currentView === 'dashboard') breadcrumbEl.textContent = t.breadcrumbDashboard;
+      else if (currentView === 'editor') breadcrumbEl.textContent = t.breadcrumbStudio;
+      else if (currentView === 'settings') breadcrumbEl.textContent = t.breadcrumbSettings;
+      else if (currentView === 'docs') breadcrumbEl.textContent = t.breadcrumbDocs;
+    }
+
+    // Update Sidebar Navigation Labels
+    const menuLblConfig = document.getElementById('menu-lbl-config');
+    const menuLblDocs = document.getElementById('menu-lbl-docs');
+    const navLblSettings = document.getElementById('nav-lbl-settings');
+    const navLblDocs = document.getElementById('nav-lbl-docs');
+    if (menuLblConfig) menuLblConfig.textContent = t.menuConfig || 'Configuration';
+    if (menuLblDocs) menuLblDocs.textContent = t.menuDocs || 'Documentation';
+    if (navLblSettings) navLblSettings.textContent = t.navSettings || 'Settings';
+    if (navLblDocs) navLblDocs.textContent = t.navDocs || 'Node Wiki';
+
+    // Synchronize language with Node Docs Component
+    if (launcherDocsInstance && typeof launcherDocsInstance.setLanguage === 'function') {
+      launcherDocsInstance.setLanguage(lang);
+    }
+
+    // Update Studio Topbar Buttons
+    const lblReload = document.getElementById('lbl-reload-studio');
+    if (lblReload) lblReload.textContent = t.btnReloadStudio;
+
+    // Update Quick Action Tools (Logs & Update Pill)
+    const lblLogs = document.querySelector('#btn-open-logs span:last-child');
+    if (lblLogs) lblLogs.textContent = t.btnLogs || 'Logs';
+    renderUpdateToolButton(!!detectedUpdateInfo, detectedUpdateInfo);
+
+    // Update Offline Placeholder
+    const lblOffHead = document.getElementById('lbl-offline-head');
+    const lblOffDesc = document.getElementById('lbl-offline-desc');
+    const lblOffBtn = document.getElementById('lbl-offline-btn');
+    if (lblOffHead) lblOffHead.textContent = t.lblOfflineHead;
+    if (lblOffDesc) lblOffDesc.textContent = t.lblOfflineDesc;
+    if (lblOffBtn) lblOffBtn.textContent = t.lblOfflineBtn;
+
+    // Update Language Pills
+    if (btnLangTh) btnLangTh.className = `btn-lang-toggle ${lang === 'th' ? 'active' : ''}`;
+    if (btnLangEn) btnLangEn.className = `btn-lang-toggle ${lang === 'en' ? 'active' : ''}`;
+
+    // Update Diagnostics Cards Titles
+    const dEngine = document.querySelector('#card-engine-status .diag-title');
+    const dServer = document.querySelector('#card-server-status .diag-title');
+    const dProfile = document.querySelector('#card-profile-status .diag-title');
+    const dClients = document.querySelector('#card-clients-status .diag-title');
+    if (dEngine) dEngine.textContent = t.diagEngineTitle;
+    if (dServer) dServer.textContent = t.diagServerTitle;
+    if (dProfile) dProfile.textContent = t.diagProfileTitle;
+    if (dClients) dClients.textContent = t.diagClientsTitle;
+    if (cachedActiveProfiles && cachedActiveProfiles.length > 0) {
+      renderActiveProfiles(cachedActiveProfiles);
+    } else {
+      renderActiveProfiles([]);
+    }
+
+    // Update Matrix Title & Buttons
+    const matrixTitle = document.getElementById('matrix-title-label');
+    if (matrixTitle) matrixTitle.textContent = t.matrixTitle;
+
+    const launchAllBtn = document.getElementById('btn-matrix-launch-all');
+    const stopAllBtn = document.getElementById('btn-matrix-stop-all');
+    const pipBtn = document.getElementById('btn-matrix-pip');
+    if (launchAllBtn && !isLaunchingAll) launchAllBtn.textContent = t.btnLaunchAll;
+    if (stopAllBtn) stopAllBtn.textContent = t.btnStopAll;
+    if (pipBtn) pipBtn.textContent = currentLang === 'en' ? '📺 PiP Screen' : '📺 จอลอย PiP';
+
+    // Update Hero Toggle Button
+    if (!isRunning && heroTitle) heroTitle.textContent = t.btnStartEngine;
+    if (isRunning && heroTitle) heroTitle.textContent = t.btnStopEngine;
+
+    // Update Terminal Elements
+    const termTitleEl = document.querySelector('.terminal-title-group .term-title');
+    if (termTitleEl) termTitleEl.textContent = t.termTitle;
+    const searchInput = document.getElementById('log-search-input');
+    if (searchInput) searchInput.placeholder = t.termSearchPlaceholder;
+    const clearBtn = document.getElementById('btn-clear-terminal');
+    if (clearBtn) clearBtn.textContent = t.btnClearTerm;
+    const pillLog = document.querySelector('.filter-pill[data-filter="log"]') || document.querySelector('.filter-pill[data-filter="step"]');
+    if (pillLog) pillLog.textContent = t.filterLog || t.filterStep || '🟢 Log';
+
+    // Update Settings View Elements
+    const lblHeadEm = document.getElementById('lbl-setting-head-emergency');
+    const lblKeyTitle = document.getElementById('lbl-setting-key-title');
+    const lblKeyDesc = document.getElementById('lbl-setting-key-desc');
+    const lblHeadOv = document.getElementById('lbl-setting-head-overlay');
+    const lblOvTitle = document.getElementById('lbl-setting-overlay-title');
+    const lblOvDesc = document.getElementById('lbl-setting-overlay-desc');
+    const lblHeadJit = document.getElementById('lbl-setting-head-jitter');
+    const lblJitTitle = document.getElementById('lbl-setting-jitter-title');
+    const lblJitDesc = document.getElementById('lbl-setting-jitter-desc');
+    const lblJitIntTitle = document.getElementById('lbl-jitter-interval-title');
+    const lblJitIntDesc = document.getElementById('lbl-jitter-interval-desc');
+    const lblJitOffTitle = document.getElementById('lbl-jitter-offset-title');
+    const lblJitOffDesc = document.getElementById('lbl-jitter-offset-desc');
+    const lblHeadUrl = document.getElementById('lbl-setting-head-url');
+    const lblUrlTitle = document.getElementById('lbl-setting-url-title');
+    const lblUrlDesc = document.getElementById('lbl-setting-url-desc');
+
+    if (lblHeadEm) lblHeadEm.textContent = t.settingEmergencyHead;
+    if (lblKeyTitle) lblKeyTitle.textContent = t.settingEmergencyKey;
+    if (lblKeyDesc) lblKeyDesc.textContent = t.settingEmergencyDesc;
+    if (lblHeadOv) lblHeadOv.textContent = t.settingOverlayHead;
+    if (lblOvTitle) lblOvTitle.textContent = t.settingOverlay;
+    if (lblOvDesc) lblOvDesc.textContent = t.settingOverlayDesc;
+    const lblHeadGpu = document.getElementById('lbl-setting-head-gpu');
+    const lblGpuTitle = document.getElementById('lbl-setting-gpu-title');
+    const lblGpuDesc = document.getElementById('lbl-setting-gpu-desc');
+    if (lblHeadGpu) lblHeadGpu.textContent = t.settingGpuHead;
+    if (lblGpuTitle) lblGpuTitle.textContent = t.settingGpuTitle;
+    if (lblGpuDesc) lblGpuDesc.textContent = t.settingGpuDesc;
+    if (lblHeadJit) lblHeadJit.textContent = t.settingJitterHead;
+    if (lblJitTitle) lblJitTitle.textContent = t.settingJitter;
+    if (lblJitDesc) lblJitDesc.textContent = t.settingJitterDesc;
+    if (lblJitIntTitle) lblJitIntTitle.textContent = t.settingJitterIntervalTitle;
+    if (lblJitIntDesc) lblJitIntDesc.textContent = t.settingJitterIntervalDesc;
+    if (lblJitOffTitle) lblJitOffTitle.textContent = t.settingJitterOffsetTitle;
+    if (lblJitOffDesc) lblJitOffDesc.textContent = t.settingJitterOffsetDesc;
+    if (lblHeadUrl) lblHeadUrl.textContent = t.settingUrlHead;
+    if (lblUrlTitle) lblUrlTitle.textContent = t.settingUrlTitle;
+    if (lblUrlDesc) lblUrlDesc.textContent = t.settingUrlDesc;
+    const lblHeadPort = document.getElementById('lbl-setting-head-port');
+    const lblPortTitle = document.getElementById('lbl-setting-port-title');
+    const lblPortDesc = document.getElementById('lbl-setting-port-desc');
+    const lblPortNote = document.getElementById('lbl-setting-port-restart-note');
+    if (lblHeadPort) lblHeadPort.textContent = t.settingPortHead;
+    if (lblPortTitle) lblPortTitle.textContent = t.settingPortTitle;
+    if (lblPortDesc) lblPortDesc.textContent = t.settingPortDesc;
+    if (lblPortNote) lblPortNote.textContent = t.settingPortNote;
+
+    // Update Storage Card Labels
+    const lblHeadStorage = document.getElementById('lbl-setting-head-storage');
+    const lblStorageDesc = document.getElementById('lbl-setting-storage-desc');
+    const lblStorageLogsTitle = document.getElementById('lbl-storage-logs-title');
+    const lblStorageShotsTitle = document.getElementById('lbl-storage-shots-title');
+    const lblStorageOpenLogs = document.getElementById('lbl-storage-open-logs');
+    const lblStorageClearLogs = document.getElementById('lbl-storage-clear-logs');
+    const lblStorageOpenShots = document.getElementById('lbl-storage-open-shots');
+    const lblStorageClearShots = document.getElementById('lbl-storage-clear-shots');
+    const lblStorageTotalTitle = document.getElementById('lbl-storage-total-title');
+    const lblStorageClearAll = document.getElementById('lbl-storage-clear-all');
+    if (lblHeadStorage) lblHeadStorage.textContent = t.settingStorageHead;
+    if (lblStorageDesc) lblStorageDesc.textContent = t.settingStorageDesc;
+    if (lblStorageLogsTitle) lblStorageLogsTitle.textContent = t.storageLogsTitle;
+    if (lblStorageShotsTitle) lblStorageShotsTitle.textContent = t.storageShotsTitle;
+    if (lblStorageOpenLogs) lblStorageOpenLogs.textContent = t.storageOpenFolder;
+    if (lblStorageClearLogs) lblStorageClearLogs.textContent = t.storageClear;
+    if (lblStorageOpenShots) lblStorageOpenShots.textContent = t.storageOpenFolder;
+    if (lblStorageClearShots) lblStorageClearShots.textContent = t.storageClear;
+    if (lblStorageTotalTitle) lblStorageTotalTitle.textContent = t.storageTotalTitle;
+    if (lblStorageClearAll) lblStorageClearAll.textContent = t.storageClearAll;
+
+    // Update Unsaved Changes Modal text
+    const lblUnsavedTitle = document.getElementById('lbl-unsaved-modal-title');
+    const lblUnsavedDesc = document.getElementById('lbl-unsaved-modal-desc');
+    const lblUnsavedHintTitle = document.getElementById('lbl-unsaved-modal-hint-title');
+    const lblUnsavedHintDesc = document.getElementById('lbl-unsaved-modal-hint-desc');
+    const btnUnsavedDiscard = document.getElementById('btn-unsaved-discard');
+    const btnUnsavedBack = document.getElementById('btn-unsaved-back');
+    if (lblUnsavedTitle) lblUnsavedTitle.textContent = t.unsavedModalTitle;
+    if (lblUnsavedDesc) lblUnsavedDesc.innerHTML = t.unsavedModalDesc;
+    if (lblUnsavedHintTitle) lblUnsavedHintTitle.textContent = t.unsavedModalHintTitle;
+    if (lblUnsavedHintDesc) lblUnsavedHintDesc.innerHTML = t.unsavedModalHintDesc;
+    if (btnUnsavedDiscard) btnUnsavedDiscard.textContent = t.unsavedModalDiscardBtn;
+    if (btnUnsavedBack) btnUnsavedBack.textContent = t.unsavedModalBackBtn;
+
+    // Update Filter Pills
+    filterPills.forEach(pill => {
+      const f = pill.dataset.filter;
+      if (f === 'all') pill.textContent = t.filterAll;
+      else if (f === 'error') pill.textContent = t.filterError;
+      else if (f === 'warn') pill.textContent = t.filterWarn;
+      else if (f === 'action') pill.textContent = t.filterAction;
+      else if (f === 'log' || f === 'step') pill.textContent = t.filterLog || t.filterStep || '🟢 Log';
+    });
+
+    // Update Update Modal Title
+    const lblUpdateModalTitle = document.getElementById('lbl-update-modal-title');
+    if (lblUpdateModalTitle) lblUpdateModalTitle.textContent = t.modalUpdateTitle || 'System Update';
+
+    // If Update Modal is open, re-render its content in the newly selected language
+    if (updateModal && updateModal.style.display === 'flex' && currentModalState) {
+      if (currentModalState.type === 'step1_result' && currentModalState.data) {
+        renderStep1CheckResult(currentModalState.data);
+      } else if (currentModalState.type === 'download_complete' && currentModalState.data) {
+        const impact = currentModalState.data.impact || (currentUpdateCheck && currentUpdateCheck.impact) || {};
+        const isEn = lang === 'en';
+        const badgeText = (isEn ? impact.badge_en : impact.badge_th) || impact.badge || '';
+        const titleText = (isEn ? impact.title_en : impact.title_th) || impact.title || (isEn ? 'Live Application Update' : 'อัปเดตแอปพลิเคชัน');
+        updateModalBody.innerHTML = `
+          ${renderWizardSteps(2)}
+          <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:8px;">
+            <div style="color:#10b981; font-weight:700; font-size:13px;">✅ ${t.btnUpdateDownloadComplete}</div>
+            ${badgeText ? `<span class="impact-badge ${impact.badgeClass}">${badgeText}</span>` : ''}
+          </div>
+          <div style="font-size:11.5px; color:#cbd5e1; line-height:1.5;">
+            ${t.btnUpdateDownloadCompleteDesc}
+          </div>
+          <div style="margin-top:10px; font-size:11px; color:#94a3b8;">
+            ⚙️ <strong>${t.btnUpdateLevelLabel}</strong> ${titleText}
+          </div>
+        `;
+        btnPerformUpdate.textContent = t.btnStep2Apply;
+        btnCancelUpdate.textContent = t.btnCancel;
+      } else if (currentModalState.type === 'apply_complete') {
+        const impact = currentModalState.impact || { level: 1 };
+        if (impact.level === 3) {
+          updateModalBody.innerHTML = `
+            ${renderWizardSteps(3)}
+            <div style="color:#f87171; font-weight:700; font-size:13px; margin-bottom:6px;">🚀 ${t.btnUpdateCoreComplete}</div>
+            <div style="font-size:11.5px; color:#cbd5e1; line-height:1.5;">${t.btnUpdateCoreCompleteDesc}</div>
+            ${impact.hasDependencyChanges ? `
+              <div style="margin-top:8px; background:rgba(16, 185, 129, 0.12); border:1px solid rgba(16, 185, 129, 0.3); border-radius:6px; padding:8px 10px; font-size:11px; color:#6ee7b7; line-height:1.4;">
+                ✅ <strong>${t.btnUpdateCoreDepSuccess}</strong>
+              </div>
+            ` : ''}
+          `;
+          btnPerformUpdate.textContent = t.btnRelaunchApp;
+          btnCancelUpdate.textContent = t.btnLater;
+        } else if (impact.level === 2) {
+          updateModalBody.innerHTML = `
+            ${renderWizardSteps(3)}
+            <div style="color:#fbbf24; font-weight:700; font-size:13px; margin-bottom:6px;">🟡 ${t.btnUpdateEngineComplete}</div>
+            <div style="font-size:11.5px; color:#cbd5e1; line-height:1.5;">${t.btnUpdateEngineCompleteDesc}</div>
+          `;
+          btnPerformUpdate.textContent = t.btnRestartEngineNow;
+          btnCancelUpdate.textContent = t.btnRestartLater;
+        } else {
+          updateModalBody.innerHTML = `
+            ${renderWizardSteps(3)}
+            <div style="color:#34d399; font-weight:700; font-size:13px; margin-bottom:6px;">✨ ${t.btnUpdateUiComplete}</div>
+            <div style="font-size:11.5px; color:#cbd5e1; line-height:1.5;">${t.btnUpdateUiCompleteDesc}</div>
+          `;
+          btnCancelUpdate.textContent = t.btnDone;
+        }
+      }
+    }
+
+    // Re-render Client Cards in active language
+    renderLauncherClientCards(cachedStatus, cachedConfig);
+
+    // Propagate language switch to iframe Studio Canvas (via postMessage & direct call)
+    if (editorFrame && editorFrame.contentWindow) {
+      try {
+        editorFrame.contentWindow.postMessage({ type: 'NODEHOTKEY_CHANGE_LANG', lang: lang }, '*');
+      } catch (e) {}
+      try {
+        if (typeof editorFrame.contentWindow.changeLang === 'function') {
+          editorFrame.contentWindow.changeLang(lang);
+        } else if (editorFrame.contentWindow.nodeCanvas && typeof editorFrame.contentWindow.nodeCanvas.updateLanguage === 'function') {
+          editorFrame.contentWindow.currentLang = lang;
+          editorFrame.contentWindow.nodeCanvas.updateLanguage(lang);
+        }
+      } catch (e) {}
+    }
+  }
+
+  if (editorFrame) {
+    editorFrame.addEventListener('load', () => {
+      isStudioDirty = false;
+      try {
+        editorFrame.contentWindow.postMessage({ type: 'NODEHOTKEY_CHANGE_LANG', lang: currentLang }, '*');
+      } catch (e) {}
+    });
+  }
+
+  if (btnLangTh) btnLangTh.onclick = () => applyLanguage('th');
+  if (btnLangEn) btnLangEn.onclick = () => applyLanguage('en');
+
+  window.addEventListener('message', (e) => {
+    if (!e.data) return;
+    if (e.data.type === 'NODEHOTKEY_CHANGE_LANG_FROM_IFRAME') {
+      const newLang = e.data.lang;
+      if (newLang && (newLang === 'th' || newLang === 'en') && newLang !== currentLang) {
+        applyLanguage(newLang);
+      }
+    }
+  });
+
+  // 4. Global Settings System (Load, Auto-Save, Hotkey Recording)
+  let isRecordingKey = false;
+
+  window.toggleJitterSubSettings = function() {
+    const jitterCb = document.getElementById('setting-enable-jitter');
+    const subPanel = document.getElementById('jitter-sub-settings');
+    if (jitterCb && subPanel) {
+      subPanel.style.display = jitterCb.checked ? 'flex' : 'none';
+    }
+  };
+
+  function loadSettingsToUI(config) {
+    if (!config || !config.globalSettings) return;
+    const gs = config.globalSettings;
+
+    const suspendKeyInput = document.getElementById('setting-suspend-key');
+    const overlayCb = document.getElementById('setting-enable-overlay');
+    const jitterCb = document.getElementById('setting-enable-jitter');
+    const jitterMin = document.getElementById('setting-jitter-min');
+    const jitterMax = document.getElementById('setting-jitter-max');
+    const jitterOffset = document.getElementById('setting-jitter-offset');
+    const targetUrlInput = document.getElementById('setting-target-url');
+
+    if (suspendKeyInput && !isRecordingKey) {
+      suspendKeyInput.value = gs.suspendHotkey || 'END';
+    }
+    if (overlayCb) {
+      overlayCb.checked = !!gs.enableOverlay;
+    }
+    const pipCb = document.getElementById('setting-enable-pip');
+    if (pipCb) {
+      pipCb.checked = !!gs.enablePipOverlay;
+    }
+    const gpuCb = document.getElementById('setting-gpu-acceleration');
+    if (gpuCb) {
+      gpuCb.checked = gs.gpuAcceleration !== false;
+    }
+    if (jitterCb) {
+      const gmj = gs.ghostMouseJitter || {};
+      jitterCb.checked = !!gmj.enabled;
+      window.toggleJitterSubSettings();
+
+      if (jitterMin && document.activeElement !== jitterMin) {
+        jitterMin.value = gmj.intervalMin || 8000;
+      }
+      if (jitterMax && document.activeElement !== jitterMax) {
+        jitterMax.value = gmj.intervalMax || 25000;
+      }
+      if (jitterOffset && document.activeElement !== jitterOffset) {
+        jitterOffset.value = gmj.maxOffset || 12;
+      }
+    }
+    if (targetUrlInput && document.activeElement !== targetUrlInput) {
+      targetUrlInput.value = gs.targetUrlKeyword || 'universe.flyff.com';
+    }
+    const portInput = document.getElementById('setting-web-port');
+    if (portInput && document.activeElement !== portInput) {
+      portInput.value = gs.webPort || 3088;
+    }
+  }
+
+  window.saveSettingsFromUI = async function() {
+    try {
+      const suspendKeyInput = document.getElementById('setting-suspend-key');
+      const overlayCb = document.getElementById('setting-enable-overlay');
+      const pipCb = document.getElementById('setting-enable-pip');
+      const gpuCb = document.getElementById('setting-gpu-acceleration');
+      const jitterCb = document.getElementById('setting-enable-jitter');
+      const jitterMin = document.getElementById('setting-jitter-min');
+      const jitterMax = document.getElementById('setting-jitter-max');
+      const jitterOffset = document.getElementById('setting-jitter-offset');
+      const targetUrlInput = document.getElementById('setting-target-url');
+      const portInput = document.getElementById('setting-web-port');
+
+      const newSettings = {};
+      if (suspendKeyInput) newSettings.suspendHotkey = suspendKeyInput.value.trim() || 'END';
+      if (overlayCb) newSettings.enableOverlay = overlayCb.checked;
+      if (pipCb) newSettings.enablePipOverlay = pipCb.checked;
+      if (gpuCb) newSettings.gpuAcceleration = gpuCb.checked;
+      if (jitterCb) {
+        newSettings.ghostMouseJitter = {
+          enabled: jitterCb.checked,
+          intervalMin: parseInt(jitterMin ? jitterMin.value : 8000, 10) || 8000,
+          intervalMax: parseInt(jitterMax ? jitterMax.value : 25000, 10) || 25000,
+          maxOffset: parseInt(jitterOffset ? jitterOffset.value : 12, 10) || 12
+        };
+      }
+      if (targetUrlInput) newSettings.targetUrlKeyword = targetUrlInput.value.trim() || 'universe.flyff.com';
+      if (portInput) {
+        const p = parseInt(portInput.value, 10);
+        if (!isNaN(p) && p >= 1024 && p <= 65535) {
+          newSettings.webPort = p;
+        }
+      }
+
+      // 1. Persist directly to configs/global.json via IPC (works even when bot is stopped!)
+      if (api && typeof api.saveGlobalSettings === 'function') {
+        await api.saveGlobalSettings(newSettings);
+      }
+
+      // Update local memory cache
+      if (!cachedConfig) cachedConfig = { globalSettings: {} };
+      if (!cachedConfig.globalSettings) cachedConfig.globalSettings = {};
+      Object.assign(cachedConfig.globalSettings, newSettings);
+
+      // 2. If server is actively running, sync changes to running process via HTTP
+      if (isServerOnline) {
+        try {
+          await fetch(getServerUrl('/api/config'), {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(cachedConfig)
+          });
+        } catch (postErr) {
+          console.warn('Could not post to active server HTTP endpoint:', postErr);
+        }
+      }
+    } catch (e) {
+      console.warn('Failed to save global settings:', e);
+    }
+  };
+
+  window.startRecordingSuspendKey = function() {
+    const input = document.getElementById('setting-suspend-key');
+    if (!input) return;
+    isRecordingKey = true;
+    input.value = '...กดปุ่ม...';
+    input.style.borderColor = '#eab308';
+    input.style.color = '#fde047';
+
+    const onKeyDown = (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+
+      let keyName = e.key.toUpperCase();
+      if (keyName === 'ESCAPE') {
+        input.value = (cachedConfig && cachedConfig.globalSettings && cachedConfig.globalSettings.suspendHotkey) || 'END';
+      } else {
+        if (keyName === ' ') keyName = 'SPACE';
+        input.value = keyName;
+        window.saveSettingsFromUI();
+      }
+
+      input.style.borderColor = '#3b82f6';
+      input.style.color = '#60a5fa';
+      isRecordingKey = false;
+      window.removeEventListener('keydown', onKeyDown, true);
+    };
+
+    window.addEventListener('keydown', onKeyDown, true);
+  };
+
+  window.clearSuspendKey = function() {
+    const input = document.getElementById('setting-suspend-key');
+    if (input) {
+      input.value = 'NONE';
+      window.saveSettingsFromUI();
+    }
+  };
+
+  // ══════════════════════════════════════════════════════════
+  // 4.0 STORAGE & DATA CLEANUP CONTROLLER
+  // ══════════════════════════════════════════════════════════
+  let currentStorageStats = null;
+  let activeClearType = null; // 'logs' | 'screenshots' | 'all'
+
+  async function refreshStorageStats() {
+    if (!api || typeof api.getStorageStats !== 'function') return;
+    try {
+      const logsDetail = document.getElementById('storage-logs-detail');
+      const logsSize = document.getElementById('storage-logs-size');
+      const shotsDetail = document.getElementById('storage-shots-detail');
+      const shotsSize = document.getElementById('storage-shots-size');
+      const totalSize = document.getElementById('storage-total-size');
+      const totalFiles = document.getElementById('storage-total-files');
+
+      const stats = await api.getStorageStats();
+      if (!stats) return;
+      currentStorageStats = stats;
+
+      if (logsSize) logsSize.textContent = stats.logs.formattedSize;
+      if (logsDetail) {
+        logsDetail.textContent = currentLang === 'en'
+          ? `${stats.logs.fileCount} ${stats.logs.fileCount === 1 ? 'file' : 'files'} in logs/`
+          : `${stats.logs.fileCount} ไฟล์ ใน logs/`;
+      }
+
+      if (shotsSize) shotsSize.textContent = stats.screenshots.formattedSize;
+      if (shotsDetail) {
+        shotsDetail.textContent = currentLang === 'en'
+          ? `${stats.screenshots.fileCount} ${stats.screenshots.fileCount === 1 ? 'image' : 'images'} in screenshots/`
+          : `${stats.screenshots.fileCount} รูป ใน screenshots/`;
+      }
+
+      if (totalSize) totalSize.textContent = stats.formattedTotal;
+      if (totalFiles) {
+        totalFiles.textContent = currentLang === 'en'
+          ? `(${stats.totalFiles} ${stats.totalFiles === 1 ? 'file' : 'files'})`
+          : `(${stats.totalFiles} ไฟล์)`;
+      }
+    } catch (err) {
+      console.warn('Failed to refresh storage stats:', err);
+    }
+  }
+
+  window.openStorageConfirmModal = function(type) {
+    activeClearType = type;
+    const modal = document.getElementById('storage-confirm-modal');
+    const descEl = document.getElementById('lbl-storage-modal-desc');
+    const confirmBtn = document.getElementById('btn-storage-modal-confirm');
+    const confirmText = document.getElementById('lbl-storage-modal-confirm-text');
+    const t = i18nDict[currentLang] || i18nDict.th;
+
+    if (confirmBtn) {
+      confirmBtn.disabled = false;
+      confirmBtn.style.opacity = '1';
+    }
+    if (confirmText) {
+      confirmText.textContent = t.storageModalConfirm || 'ยืนยันการลบ';
+    }
+
+    if (descEl) {
+      if (type === 'logs') {
+        const count = currentStorageStats?.logs?.fileCount || 0;
+        const size = currentStorageStats?.logs?.formattedSize || '0 B';
+        descEl.innerHTML = currentLang === 'en'
+          ? `Are you sure you want to permanently delete all <strong>${count} log files (${size})</strong> in <code>logs/</code>?`
+          : `คุณต้องการลบไฟล์ Logs ทั้งหมด <strong>${count} ไฟล์ (${size})</strong> ในโฟลเดอร์ <code>logs/</code> ใช่หรือไม่?`;
+      } else if (type === 'screenshots') {
+        const count = currentStorageStats?.screenshots?.fileCount || 0;
+        const size = currentStorageStats?.screenshots?.formattedSize || '0 B';
+        descEl.innerHTML = currentLang === 'en'
+          ? `Are you sure you want to permanently delete all <strong>${count} screenshot images (${size})</strong> in <code>screenshots/</code>?`
+          : `คุณต้องการลบรูปภาพทั้งหมด <strong>${count} รูป (${size})</strong> ในโฟลเดอร์ <code>screenshots/</code> ใช่หรือไม่?`;
+      } else {
+        const count = currentStorageStats?.totalFiles || 0;
+        const size = currentStorageStats?.formattedTotal || '0 B';
+        descEl.innerHTML = currentLang === 'en'
+          ? `Are you sure you want to permanently delete <strong>ALL logs and screenshots (${count} files, ${size})</strong>?`
+          : `คุณต้องการลบ<strong>ทั้งไฟล์ Logs และ Screenshots ทั้งหมด (${count} ไฟล์, ${size})</strong> ออกจากเครื่องใช่หรือไม่?`;
+      }
+    }
+
+    if (modal) modal.style.display = 'flex';
+  };
+
+  window.closeStorageConfirmModal = function() {
+    const modal = document.getElementById('storage-confirm-modal');
+    if (modal) modal.style.display = 'none';
+    activeClearType = null;
+  };
+
+  window.executeStorageClear = async function() {
+    if (!api || !activeClearType) return;
+    const confirmBtn = document.getElementById('btn-storage-modal-confirm');
+    const confirmText = document.getElementById('lbl-storage-modal-confirm-text');
+    const descEl = document.getElementById('lbl-storage-modal-desc');
+
+    if (confirmBtn) {
+      confirmBtn.disabled = true;
+      confirmBtn.style.opacity = '0.7';
+    }
+    if (confirmText) {
+      confirmText.textContent = currentLang === 'en' ? 'Deleting...' : 'กำลังลบ...';
+    }
+
+    try {
+      let res;
+      if (activeClearType === 'logs') {
+        res = await api.clearLogs();
+      } else if (activeClearType === 'screenshots') {
+        res = await api.clearScreenshots();
+      } else {
+        res = await api.clearAllStorage();
+      }
+
+      if (descEl) {
+        descEl.innerHTML = currentLang === 'en'
+          ? `✅ <strong>Cleanup Complete!</strong> Deleted ${res.deletedFiles} files and freed <strong>${res.formattedFreed}</strong>.`
+          : `✅ <strong>ล้างข้อมูลสำเร็จ!</strong> ลบไฟล์เรียบร้อย ${res.deletedFiles} ไฟล์ ได้พื้นที่คืนมา <strong>${res.formattedFreed}</strong>`;
+      }
+
+      await refreshStorageStats();
+
+      setTimeout(() => {
+        window.closeStorageConfirmModal();
+      }, 1200);
+    } catch (err) {
+      if (descEl) {
+        descEl.innerHTML = `❌ Error: ${err.message}`;
+      }
+      if (confirmBtn) confirmBtn.disabled = false;
+      if (confirmText) confirmText.textContent = 'Retry';
+    }
+  };
+
+  // Wire Storage Buttons
+  const btnStorageOpenLogs = document.getElementById('btn-storage-open-logs');
+  const btnStorageClearLogs = document.getElementById('btn-storage-clear-logs');
+  const btnStorageOpenShots = document.getElementById('btn-storage-open-shots');
+  const btnStorageClearShots = document.getElementById('btn-storage-clear-shots');
+  const btnStorageRefresh = document.getElementById('btn-storage-refresh');
+  const btnStorageClearAll = document.getElementById('btn-storage-clear-all');
+
+  if (btnStorageOpenLogs) btnStorageOpenLogs.onclick = () => api.openLogFolder();
+  if (btnStorageClearLogs) btnStorageClearLogs.onclick = () => window.openStorageConfirmModal('logs');
+  if (btnStorageOpenShots) btnStorageOpenShots.onclick = () => api.openScreenshotsFolder();
+  if (btnStorageClearShots) btnStorageClearShots.onclick = () => window.openStorageConfirmModal('screenshots');
+  if (btnStorageRefresh) btnStorageRefresh.onclick = () => refreshStorageStats();
+  if (btnStorageClearAll) btnStorageClearAll.onclick = () => window.openStorageConfirmModal('all');
+
+  // ══════════════════════════════════════════════════════════
+  // 4.1 LAUNCHER VISUAL KEY PICKER & MECHANICAL KEYBOARD
+  // ══════════════════════════════════════════════════════════
+  let launcherSelectedModifiers = new Set();
+  let launcherSelectedKeys = [];
+  let launcherIsManualMode = false;
+
+  function renderLauncherKeyboardUI() {
+    const previewEl = document.getElementById('launcher-vk-preview');
+    const manualInput = document.getElementById('launcher-vk-manual-input');
+    const manualArea = document.getElementById('launcher-vk-manual-area');
+    const pickerArea = document.getElementById('launcher-vk-picker-area');
+    const toggleBtn = document.getElementById('btn-vk-toggle-manual');
+
+    // Build combination string
+    let comboParts = [];
+    if (launcherSelectedModifiers.has('CTRL')) comboParts.push('CTRL');
+    if (launcherSelectedModifiers.has('LEFT ALT') || launcherSelectedModifiers.has('ALT')) comboParts.push('ALT');
+    if (launcherSelectedModifiers.has('SHIFT')) comboParts.push('SHIFT');
+    if (launcherSelectedKeys.length > 0) comboParts.push(launcherSelectedKeys.join(' + '));
+
+    const finalVal = comboParts.join(' + ') || 'NONE';
+    if (previewEl) previewEl.textContent = finalVal;
+    if (manualInput && document.activeElement !== manualInput) manualInput.value = finalVal === 'NONE' ? '' : finalVal;
+
+    // Toggle active modifier button highlight
+    const modal = document.getElementById('launcher-key-picker-modal');
+    if (modal) {
+      modal.querySelectorAll('.vk-mod-btn').forEach(btn => {
+        const mod = btn.dataset.mod;
+        if (launcherSelectedModifiers.has(mod)) btn.classList.add('active');
+        else btn.classList.remove('active');
+      });
+    }
+
+    if (manualArea && pickerArea && toggleBtn) {
+      manualArea.style.display = launcherIsManualMode ? 'flex' : 'none';
+      pickerArea.style.display = launcherIsManualMode ? 'none' : 'flex';
+      toggleBtn.textContent = launcherIsManualMode ? '⌨️ Switch to Keyboard Picker' : '✏️ Switch to Manual Typing';
+    }
+  }
+
+  window.openLauncherKeyPicker = function() {
+    launcherSelectedModifiers.clear();
+    launcherSelectedKeys = [];
+    launcherIsManualMode = false;
+
+    const input = document.getElementById('setting-suspend-key');
+    const currentVal = input ? input.value.trim() : 'END';
+
+    if (currentVal && currentVal !== 'NONE' && currentVal !== '...กดปุ่ม...') {
+      const parts = currentVal.split('+').map(s => s.trim()).filter(Boolean);
+      parts.forEach(p => {
+        const upper = p.toUpperCase();
+        if (['CTRL', 'LEFT CTRL', 'RIGHT CTRL'].includes(upper)) launcherSelectedModifiers.add('CTRL');
+        else if (['ALT', 'LEFT ALT', 'RIGHT ALT'].includes(upper)) launcherSelectedModifiers.add('LEFT ALT');
+        else if (['SHIFT', 'LEFT SHIFT', 'RIGHT SHIFT'].includes(upper)) launcherSelectedModifiers.add('SHIFT');
+        else launcherSelectedKeys.push(upper);
+      });
+    }
+
+    renderLauncherKeyboardUI();
+
+    const modal = document.getElementById('launcher-key-picker-modal');
+    if (modal) modal.style.display = 'flex';
+  };
+
+  window.closeLauncherKeyPicker = function() {
+    const modal = document.getElementById('launcher-key-picker-modal');
+    if (modal) modal.style.display = 'none';
+  };
+
+  window.toggleLauncherManualMode = function() {
+    launcherIsManualMode = !launcherIsManualMode;
+    renderLauncherKeyboardUI();
+  };
+
+  window.toggleLauncherModifier = function(mod) {
+    if (launcherSelectedModifiers.has(mod)) launcherSelectedModifiers.delete(mod);
+    else launcherSelectedModifiers.add(mod);
+    renderLauncherKeyboardUI();
+  };
+
+  window.pressLauncherVirtualKey = function(key) {
+    launcherSelectedKeys = [key]; // Single main key for emergency pause
+    renderLauncherKeyboardUI();
+  };
+
+  window.popLauncherVirtualKey = function() {
+    if (launcherSelectedKeys.length > 0) {
+      launcherSelectedKeys.pop();
+    } else if (launcherSelectedModifiers.size > 0) {
+      launcherSelectedModifiers.clear();
+    }
+    renderLauncherKeyboardUI();
+  };
+
+  window.clearLauncherVirtualKey = function() {
+    launcherSelectedModifiers.clear();
+    launcherSelectedKeys = [];
+    renderLauncherKeyboardUI();
+  };
+
+  window.onLauncherManualInput = function(val) {
+    const previewEl = document.getElementById('launcher-vk-preview');
+    if (previewEl) previewEl.textContent = val.trim() || 'NONE';
+  };
+
+  window.applyLauncherKeyPicker = function() {
+    const previewEl = document.getElementById('launcher-vk-preview');
+    const input = document.getElementById('setting-suspend-key');
+    if (previewEl && input) {
+      const chosenKey = previewEl.textContent.trim() || 'END';
+      input.value = chosenKey;
+      window.saveSettingsFromUI();
+    }
+    window.closeLauncherKeyPicker();
+  };
+
+  // 4. Client Matrix System (Launch, Close, Pause/Resume, Alias, Settings)
+  const launchingClients = new Set();
+  let isLaunchingAll = false;
+
+  window.launchClient = async function(clientIdx) {
+    if (launchingClients.has(clientIdx)) return;
+    launchingClients.add(clientIdx);
+    renderLauncherClientCards(cachedStatus, cachedConfig);
+
+    try {
+      const gs = (cachedConfig && cachedConfig.globalSettings) || {};
+      const browsers = gs.clientBrowsers || {};
+      const browserChoice = browsers[String(clientIdx)] || '1';
+
+      await fetch(getServerUrl('/api/client/launch'), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ clientIndex: clientIdx, browserChoice })
+      });
+      syncBackendStatus();
+    } catch (e) {
+      console.warn('Cannot launch client:', e);
+    } finally {
+      setTimeout(() => {
+        launchingClients.delete(clientIdx);
+        renderLauncherClientCards(cachedStatus, cachedConfig);
+      }, 2500);
+    }
+  };
+
+  window.closeClient = async function(clientIdx) {
+    try {
+      await fetch(getServerUrl('/api/client/close'), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ clientIndex: clientIdx })
+      });
+      syncBackendStatus();
+    } catch (e) {
+      console.warn('Cannot close client:', e);
+    }
+  };
+
+  window.toggleClientPause = async function(clientIdx) {
+    try {
+      await fetch(getServerUrl('/api/client/toggle-enable'), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ clientIndex: clientIdx })
+      });
+      syncBackendStatus();
+    } catch (e) {
+      console.warn('Cannot toggle client enable:', e);
+    }
+  };
+
+  window.saveClientAlias = async function(clientIdx, newAlias) {
+    try {
+      const cleanAlias = (newAlias || '').trim();
+      if (!cachedConfig) {
+        const res = await fetch(getServerUrl('/api/config'));
+        cachedConfig = await res.json();
+      }
+      if (!cachedConfig.globalSettings) cachedConfig.globalSettings = {};
+      if (!cachedConfig.globalSettings.clientAliases) cachedConfig.globalSettings.clientAliases = {};
+      cachedConfig.globalSettings.clientAliases[String(clientIdx)] = cleanAlias;
+
+      // Update both global config and live browser tab title in real-time
+      await fetch(getServerUrl('/api/client/alias'), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ clientIndex: clientIdx, alias: cleanAlias })
+      });
+      syncBackendStatus();
+    } catch (e) {
+      console.warn('Failed to save client alias:', e);
+    }
+  };
+
+  // User-Agent Pool for Anti-Detect
+  const USER_AGENT_POOL = [
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36 Edg/122.0.0.0",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36 Edg/121.0.0.0",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:123.0) Gecko/20100101 Firefox/123.0",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:122.0) Gecko/20100101 Firefox/122.0",
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.3 Safari/605.1.15",
+    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
+  ];
+
+  window.randomizeModalUA = function() {
+    const uaInput = document.getElementById('modal-client-ua');
+    if (uaInput) {
+      const rand = USER_AGENT_POOL[Math.floor(Math.random() * USER_AGENT_POOL.length)];
+      uaInput.value = rand;
+    }
+  };
+
+  window.clearModalUA = function() {
+    const uaInput = document.getElementById('modal-client-ua');
+    if (uaInput) uaInput.value = '';
+  };
+
+  window.clearModalProxy = function() {
+    const proxyInput = document.getElementById('modal-client-proxy');
+    if (proxyInput) proxyInput.value = '';
+  };
+
+  window.openClientSettingsModal = function(clientIdx) {
+    const modal = document.getElementById('client-settings-modal');
+    const nameSpan = document.getElementById('client-settings-modal-name');
+    const idxInput = document.getElementById('modal-client-idx');
+    const browserSelect = document.getElementById('modal-client-browser');
+    const proxyInput = document.getElementById('modal-client-proxy');
+    const uaInput = document.getElementById('modal-client-ua');
+
+    if (!modal) return;
+    idxInput.value = clientIdx;
+    
+    const t = i18nDict[currentLang] || i18nDict.th;
+    updateClientSettingsModalTexts(currentLang);
+
+    const gs = (cachedConfig && cachedConfig.globalSettings) || {};
+    const aliases = gs.clientAliases || {};
+    const defaultAlias = currentLang === 'en' ? `Client ${clientIdx}` : `จอ ${clientIdx}`;
+    const alias = aliases[String(clientIdx)] || defaultAlias;
+    if (nameSpan) {
+      nameSpan.textContent = t.modalSettingsTitle.replace('{i}', clientIdx).replace('{alias}', alias);
+    }
+
+    const browsers = gs.clientBrowsers || {};
+    const proxies = gs.clientProxies || {};
+    const uas = gs.clientUserAgents || {};
+
+    if (browserSelect) browserSelect.value = browsers[String(clientIdx)] || '1';
+    if (proxyInput) proxyInput.value = proxies[String(clientIdx)] || '';
+    if (uaInput) uaInput.value = uas[String(clientIdx)] || '';
+
+    const boundsInfo = document.getElementById('modal-client-bounds-info');
+    const boundsMap = gs.clientWindowBounds || {};
+    const bounds = boundsMap[String(clientIdx)];
+    if (boundsInfo) {
+      if (bounds && typeof bounds.x === 'number' && typeof bounds.y === 'number') {
+        const w = bounds.width || bounds.w || 960;
+        const h = bounds.height || bounds.h || 540;
+        boundsInfo.textContent = `X: ${bounds.x}, Y: ${bounds.y} (${w}x${h})`;
+        boundsInfo.style.color = '#38bdf8';
+      } else {
+        boundsInfo.textContent = t.modalBoundsDefaultText;
+        boundsInfo.style.color = '#94a3b8';
+      }
+    }
+
+    modal.style.display = 'flex';
+  };
+
+  window.closeClientSettingsModal = function() {
+    const modal = document.getElementById('client-settings-modal');
+    if (modal) modal.style.display = 'none';
+  };
+
+  window.resetModalWindowBounds = async function() {
+    const idxInput = document.getElementById('modal-client-idx');
+    const resetBtn = document.getElementById('btn-modal-reset-bounds');
+    const boundsInfo = document.getElementById('modal-client-bounds-info');
+    if (!idxInput) return;
+    const clientIdx = parseInt(idxInput.value, 10);
+
+    try {
+      if (!cachedConfig) {
+        const res = await fetch(getServerUrl('/api/config'));
+        cachedConfig = await res.json();
+      }
+      if (cachedConfig.globalSettings && cachedConfig.globalSettings.clientWindowBounds) {
+        delete cachedConfig.globalSettings.clientWindowBounds[String(clientIdx)];
+      }
+
+      await fetch(getServerUrl('/api/config'), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(cachedConfig)
+      });
+
+      await fetch(getServerUrl('/api/client/reset-bounds'), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ clientIndex: clientIdx })
+      });
+
+      const t = i18nDict[currentLang] || i18nDict.th;
+      if (boundsInfo) {
+        boundsInfo.textContent = t.modalBoundsDefaultText;
+        boundsInfo.style.color = '#94a3b8';
+      }
+      if (resetBtn) {
+        resetBtn.textContent = t.modalBoundsResetDone;
+        resetBtn.style.color = '#38bdf8';
+        resetBtn.style.borderColor = 'rgba(56,189,248,0.4)';
+        setTimeout(() => {
+          const curT = i18nDict[currentLang] || i18nDict.th;
+          resetBtn.textContent = curT.modalBoundsResetBtn;
+          resetBtn.style.color = '#cbd5e1';
+          resetBtn.style.borderColor = 'rgba(255,255,255,0.15)';
+        }, 1800);
+      }
+    } catch (e) {
+      console.warn('Failed to reset bounds:', e);
+      if (boundsInfo) {
+        const t = i18nDict[currentLang] || i18nDict.th;
+        boundsInfo.textContent = t.modalBoundsDefaultText;
+      }
+    }
+  };
+
+  window.clearModalClientProfileData = async function() {
+    const idxInput = document.getElementById('modal-client-idx');
+    if (!idxInput) return;
+    const clientIdx = parseInt(idxInput.value, 10);
+    const clearBtn = document.getElementById('btn-modal-clear-profile');
+    const t = i18nDict[currentLang] || i18nDict.th;
+
+    const activeList = (cachedStatus && cachedStatus.activeClients) ? cachedStatus.activeClients.map(Number) : [];
+    if (activeList.includes(clientIdx)) {
+      window.showToast(t.modalClearProfileActiveAlert.replace('{i}', clientIdx), 'warning', 'หน้าจอกำลังทำงาน');
+      return;
+    }
+
+    const confirmMsg = t.modalClearProfileConfirm.replace('{i}', clientIdx);
+    const confirmed = await window.showConfirm({
+      title: currentLang === 'en' ? `Clear Browser Profile (Client ${clientIdx})` : `ล้างข้อมูลโปรไฟล์ Browser (จอ ${clientIdx})`,
+      message: confirmMsg,
+      confirmText: currentLang === 'en' ? 'Clear Data' : 'ล้างข้อมูลโปรไฟล์',
+      cancelText: currentLang === 'en' ? 'Cancel' : 'ยกเลิก',
+      type: 'danger',
+      icon: '🗑️'
+    });
+    if (!confirmed) return;
+
+    try {
+      if (clearBtn) {
+        clearBtn.disabled = true;
+        clearBtn.textContent = currentLang === 'en' ? 'Clearing...' : 'กำลังลบ...';
+      }
+
+      const res = await fetch(getServerUrl('/api/client/clear-profile'), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ clientIndex: clientIdx })
+      });
+      const data = await res.json();
+
+      if (data.success) {
+        window.showToast(`ล้างข้อมูลโปรไฟล์ จอ ${clientIdx} เรียบร้อยแล้ว`, 'success', 'ล้างข้อมูลสำเร็จ ✓');
+        if (clearBtn) {
+          clearBtn.textContent = t.modalClearProfileDone;
+          clearBtn.style.color = '#38bdf8';
+          clearBtn.style.borderColor = 'rgba(56,189,248,0.4)';
+          setTimeout(() => {
+            clearBtn.disabled = false;
+            const curT = i18nDict[currentLang] || i18nDict.th;
+            clearBtn.textContent = curT.modalClearProfileBtn;
+            clearBtn.style.color = '#f87171';
+            clearBtn.style.borderColor = 'rgba(239,68,68,0.3)';
+          }, 2000);
+        }
+      } else {
+        window.showToast(data.error || 'Failed to clear browser data', 'error', 'เกิดข้อผิดพลาด ❌');
+        if (clearBtn) {
+          clearBtn.disabled = false;
+          clearBtn.textContent = t.modalClearProfileBtn;
+        }
+      }
+    } catch (err) {
+      window.showToast('Error clearing browser data: ' + err.message, 'error', 'เกิดข้อผิดพลาด ❌');
+      if (clearBtn) {
+        clearBtn.disabled = false;
+        clearBtn.textContent = t.modalClearProfileBtn;
+      }
+    }
+  };
+
+  window.saveClientSettingsFromModal = async function() {
+    const idxInput = document.getElementById('modal-client-idx');
+    const browserSelect = document.getElementById('modal-client-browser');
+    const proxyInput = document.getElementById('modal-client-proxy');
+    const uaInput = document.getElementById('modal-client-ua');
+    if (!idxInput) return;
+
+    const clientIdx = String(idxInput.value);
+    try {
+      if (!cachedConfig) {
+        const res = await fetch(getServerUrl('/api/config'));
+        cachedConfig = await res.json();
+      }
+      if (!cachedConfig.globalSettings) cachedConfig.globalSettings = {};
+      const gs = cachedConfig.globalSettings;
+      if (!gs.clientBrowsers) gs.clientBrowsers = {};
+      if (!gs.clientProxies) gs.clientProxies = {};
+      if (!gs.clientUserAgents) gs.clientUserAgents = {};
+
+      if (browserSelect) gs.clientBrowsers[clientIdx] = browserSelect.value;
+      if (proxyInput) gs.clientProxies[clientIdx] = proxyInput.value.trim();
+      if (uaInput) gs.clientUserAgents[clientIdx] = uaInput.value.trim();
+
+      await fetch(getServerUrl('/api/config'), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(cachedConfig)
+      });
+
+      closeClientSettingsModal();
+      syncBackendStatus();
+    } catch (e) {
+      console.warn('Failed to save client settings:', e);
+    }
+  };
+
+  window.launchAllClients = async function() {
+    if (isLaunchingAll) return;
+    isLaunchingAll = true;
+    const t = i18nDict[currentLang] || i18nDict.th;
+    const launchAllBtn = document.getElementById('btn-matrix-launch-all');
+    if (launchAllBtn) {
+      launchAllBtn.textContent = t.btnLaunchAllLoading;
+      launchAllBtn.style.pointerEvents = 'none';
+      launchAllBtn.style.opacity = '0.7';
+    }
+
+    const gs = (cachedConfig && cachedConfig.globalSettings) || {};
+    let slots = Array.isArray(gs.clientSlots) ? gs.clientSlots.slice() : [1, 2, 3, 4, 5, 6, 7, 8];
+    if (slots.length === 0) slots = [1];
+    slots.sort((a, b) => a - b);
+
+    slots.forEach(i => launchingClients.add(i));
+    renderLauncherClientCards(cachedStatus, cachedConfig);
+
+    slots.forEach(i => {
+      try {
+        const browsers = gs.clientBrowsers || {};
+        const browserChoice = browsers[String(i)] || '1';
+
+        fetch(getServerUrl('/api/client/launch'), {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ clientIndex: i, browserChoice })
+        }).catch(() => {});
+      } catch (e) {}
+    });
+
+    setTimeout(() => {
+      isLaunchingAll = false;
+      launchingClients.clear();
+      if (launchAllBtn) {
+        const curT = i18nDict[currentLang] || i18nDict.th;
+        launchAllBtn.textContent = curT.btnLaunchAll;
+        launchAllBtn.style.pointerEvents = 'auto';
+        launchAllBtn.style.opacity = '1';
+      }
+      syncBackendStatus();
+    }, 3000);
+  };
+
+  window.stopAllClients = async function() {
+    const gs = (cachedConfig && cachedConfig.globalSettings) || {};
+    const slots = Array.isArray(gs.clientSlots) ? gs.clientSlots.slice() : [1, 2, 3, 4, 5, 6, 7, 8];
+    const activeList = (cachedStatus && cachedStatus.activeClients) ? cachedStatus.activeClients.map(Number) : slots;
+    activeList.forEach(i => {
+      try {
+        fetch(getServerUrl('/api/client/close'), {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ clientIndex: i })
+        }).catch(() => {});
+      } catch (e) {}
+    });
+    setTimeout(syncBackendStatus, 1000);
+  };
+
+  window.addClientSlot = async function(slotIdx) {
+    try {
+      if (!cachedConfig) {
+        const res = await fetch(getServerUrl('/api/config'));
+        cachedConfig = await res.json();
+      }
+      if (!cachedConfig.globalSettings) cachedConfig.globalSettings = {};
+      let slots = Array.isArray(cachedConfig.globalSettings.clientSlots)
+        ? cachedConfig.globalSettings.clientSlots.slice()
+        : [1, 2, 3, 4, 5, 6, 7, 8];
+      const targetSlot = parseInt(slotIdx, 10);
+      if (!slots.includes(targetSlot)) {
+        slots.push(targetSlot);
+        slots.sort((a, b) => a - b);
+      }
+      cachedConfig.globalSettings.clientSlots = slots;
+
+      await fetch(getServerUrl('/api/config'), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(cachedConfig)
+      });
+      syncBackendStatus();
+    } catch (e) {
+      console.warn('Failed to add client slot:', e);
+    }
+  };
+
+  let pendingDeleteSlot = null;
+
+  window.closeDeleteSlotModal = function() {
+    pendingDeleteSlot = null;
+    const modal = document.getElementById('delete-slot-confirm-modal');
+    if (modal) modal.style.display = 'none';
+  };
+
+  window.deleteClientSlot = async function(slotIdx) {
+    const targetSlot = parseInt(slotIdx, 10);
+    const activeList = (cachedStatus && cachedStatus.activeClients) ? cachedStatus.activeClients.map(Number) : [];
+    const t = i18nDict[currentLang] || i18nDict.th;
+
+    if (activeList.includes(targetSlot)) {
+      window.showToast(t.delSlotActiveAlert || 'กรุณาปิดจอเกมก่อนทำการลบช่องจอ', 'warning', 'หน้าจอกำลังทำงาน');
+      return;
+    }
+
+    pendingDeleteSlot = targetSlot;
+
+    const modal = document.getElementById('delete-slot-confirm-modal');
+    if (!modal) {
+      const ok = await window.showConfirm({
+        title: t.delSlotModalTitle || 'ยืนยันการลบช่องจอ',
+        message: `คุณต้องการลบช่อง Client ${targetSlot} ออกจากระบบใช่หรือไม่?\n\nตำแหน่งนี้จะกลายเป็นช่องว่างและสามารถกดสร้างใหม่ได้ตลอดเวลา`,
+        confirmText: t.delSlotModalConfirmBtn || 'ลบช่องจอ',
+        cancelText: t.delSlotModalCancel || 'ยกเลิก',
+        type: 'danger',
+        icon: '🗑️'
+      });
+      if (ok) {
+        window.confirmExecuteDeleteSlot();
+      }
+      return;
+    }
+
+    const gs = (cachedConfig && cachedConfig.globalSettings) || {};
+    const aliases = gs.clientAliases || {};
+    const aliasVal = aliases[String(targetSlot)] || aliases[targetSlot];
+    const aliasHtml = aliasVal ? ` <span style="color:#38bdf8;">(${escapeHtml(aliasVal)})</span>` : '';
+
+    const titleEl = document.getElementById('lbl-del-slot-modal-title');
+    const descEl = document.getElementById('lbl-del-slot-modal-desc');
+    const hintHeadEl = document.getElementById('lbl-del-slot-modal-hint-head');
+    const hintTextEl = document.getElementById('lbl-del-slot-modal-hint-text');
+    const cancelBtn = document.getElementById('btn-del-slot-modal-cancel');
+    const confirmBtn = document.getElementById('lbl-del-slot-modal-confirm-btn');
+
+    if (titleEl) titleEl.textContent = t.delSlotModalTitle || 'ยืนยันการลบช่องจอ';
+    if (descEl) descEl.innerHTML = (t.delSlotModalDesc || 'คุณต้องการลบช่อง <strong>Client {slot}</strong>{alias} ออกจากระบบใช่หรือไม่?')
+      .replace('{slot}', targetSlot)
+      .replace('{alias}', aliasHtml);
+    if (hintHeadEl) hintHeadEl.textContent = t.delSlotModalHintHead || 'ข้อมูลสำคัญ:';
+    if (hintTextEl) hintTextEl.innerHTML = (t.delSlotModalHintText || 'หลังลบ ตำแหน่งนี้จะกลายเป็นช่องว่าง <strong>[ ➕ เพิ่มจอ {slot} ]</strong> โดยจะไม่เปลี่ยนเลขประจำตัวของจออื่นๆ และคุณสามารถกดสร้างกลับมาใหม่เมื่อใดก็ได้')
+      .replace('{slot}', targetSlot);
+    if (cancelBtn) cancelBtn.textContent = t.delSlotModalCancel || '✕ ยกเลิก';
+    if (confirmBtn) confirmBtn.textContent = t.delSlotModalConfirm || 'ยืนยันการลบ';
+
+    modal.style.display = 'flex';
+  };
+
+  window.confirmExecuteDeleteSlot = async function() {
+    if (pendingDeleteSlot === null || pendingDeleteSlot === undefined) return;
+    const targetSlot = pendingDeleteSlot;
+    window.closeDeleteSlotModal();
+
+    try {
+      if (!cachedConfig) {
+        const res = await fetch(getServerUrl('/api/config'));
+        cachedConfig = await res.json();
+      }
+      if (!cachedConfig.globalSettings) cachedConfig.globalSettings = {};
+      let slots = Array.isArray(cachedConfig.globalSettings.clientSlots)
+        ? cachedConfig.globalSettings.clientSlots.slice()
+        : [1];
+      slots = slots.filter(s => s !== targetSlot);
+      cachedConfig.globalSettings.clientSlots = slots;
+
+      await fetch(getServerUrl('/api/config'), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(cachedConfig)
+      });
+      syncBackendStatus();
+    } catch (e) {
+      console.warn('Failed to delete client slot:', e);
+    }
+  };
+
+  function renderLauncherClientCards(data, config) {
+    const grid = document.getElementById('launcher-client-matrix-grid');
+    if (!grid) return;
+
+    const t = i18nDict[currentLang] || i18nDict.th;
+    const activeList = (data && data.activeClients) ? data.activeClients.map(String) : [];
+    const disabledList = (data && data.disabledClients) ? data.disabledClients.map(String) : [];
+    const gs = (config && config.globalSettings) || {};
+    const aliases = gs.clientAliases || (data && data.clientAliases) || {};
+    const browsers = gs.clientBrowsers || {};
+
+    let slots = Array.isArray(gs.clientSlots) ? gs.clientSlots.slice() : [];
+    slots = slots.map(Number).sort((a, b) => a - b);
+
+    if (slots.length === 0) {
+      const emptyLabel = (t.emptySlotLabel || 'เพิ่มจอ {i}').replace('{i}', 1);
+      grid.innerHTML = `
+        <div class="c-matrix-tile empty-slot" onclick="addClientSlot(1)" title="${emptyLabel}">
+          <div class="empty-slot-icon">➕</div>
+          <div class="empty-slot-label">${emptyLabel}</div>
+        </div>
+      `;
+      return;
+    }
+
+    const maxSlot = Math.max(...slots, 1);
+    let html = '';
+
+    for (let i = 1; i <= maxSlot; i++) {
+      if (!slots.includes(i)) {
+        // Empty Slot Card (Placeholder for deleted slot in the middle)
+        const emptyLabel = (t.emptySlotLabel || 'เพิ่มจอ {i}').replace('{i}', i);
+        html += `
+          <div class="c-matrix-tile empty-slot" onclick="addClientSlot(${i})" title="${emptyLabel}">
+            <div class="empty-slot-icon">➕</div>
+            <div class="empty-slot-label">${emptyLabel}</div>
+          </div>
+        `;
+        continue;
+      }
+
+      const sIdx = String(i);
+      const alias = aliases[sIdx] || aliases[i] || '';
+      const isActive = activeList.includes(sIdx);
+      const isPaused = disabledList.includes(sIdx);
+      const isLaunching = launchingClients.has(i);
+
+      const browserCode = browsers[sIdx] || '1';
+      let bIcon = '🌐';
+      if (browserCode === '2' || browserCode === '2-app') bIcon = '🌊';
+      else if (browserCode === '3') bIcon = '🦊';
+
+      let statusBadge = `<span class="c-tile-badge offline">${t.cBadgeOffline}</span>`;
+      let tileClass = 'c-matrix-tile';
+      let actionButtons = isLaunching
+        ? `<button class="btn-c-action launch" style="opacity:0.7; pointer-events:none;">${t.cBtnLaunching}</button>`
+        : `<button class="btn-c-action launch" onclick="launchClient(${i})">${t.cBtnLaunch}</button>`;
+
+      let delBtn = '';
+      if (!isActive && !isLaunching) {
+        delBtn = `<button type="button" class="btn-c-del-slot" onclick="event.stopPropagation(); deleteClientSlot(${i})" title="ลบช่องจอ ${i}">🗑️</button>`;
+      }
+
+      if (isActive) {
+        if (isPaused) {
+          statusBadge = `<span class="c-tile-badge paused">${t.cBadgePaused}</span>`;
+          tileClass = 'c-matrix-tile paused';
+          actionButtons = `
+            <button class="btn-c-action resume" onclick="toggleClientPause(${i})" title="${t.cBtnResumeTitle || t.cBtnResume}">${t.cBtnResume}</button>
+            <button class="btn-c-close" onclick="closeClient(${i})" title="${t.cCloseTitle}">❌</button>
+          `;
+        } else {
+          statusBadge = `<span class="c-tile-badge active">${t.cBadgeActive}</span>`;
+          tileClass = 'c-matrix-tile active';
+          actionButtons = `
+            <button class="btn-c-action pause" onclick="toggleClientPause(${i})" title="${t.cBtnPauseTitle || t.cBtnPause}">${t.cBtnPause}</button>
+            <button class="btn-c-close" onclick="closeClient(${i})" title="${t.cCloseTitle}">❌</button>
+          `;
+        }
+      }
+
+      html += `
+        <div class="${tileClass}" id="c-tile-${i}">
+          <div class="c-tile-head">
+            <div class="c-tile-title-box">
+              <span>${bIcon} Client ${i}</span>
+              <button type="button" class="btn-c-gear" onclick="openClientSettingsModal(${i})" title="${t.cSettingsTitle}">⚙️</button>
+              ${delBtn}
+            </div>
+            ${statusBadge}
+          </div>
+          <input type="text" class="c-alias-input" id="c-alias-${i}" value="${alias.replace(/"/g, '&quot;')}" placeholder="${t.cAliasPlaceholder}" onchange="saveClientAlias(${i}, this.value)" onkeydown="if(event.key==='Enter')this.blur()" title="${t.cAliasTitle}" />
+          <div class="c-tile-tools">
+            ${actionButtons}
+          </div>
+        </div>
+      `;
+    }
+
+    // Trailing Add Button Card
+    const nextSlot = maxSlot + 1;
+    const addLabel = (t.addNewSlotLabel || 'เพิ่มจอใหม่ (จอ {nextSlot})').replace('{nextSlot}', nextSlot);
+    html += `
+      <div class="c-matrix-tile add-new-slot" onclick="addClientSlot(${nextSlot})" title="${addLabel}">
+        <div class="add-new-slot-icon">➕</div>
+        <div class="add-new-slot-label">${addLabel}</div>
+      </div>
+    `;
+
+    grid.innerHTML = html;
+  }
+
+  window.toggleClientPiP = function(clientId) {
+    if (window.launcherAPI && window.launcherAPI.togglePiP) {
+      window.launcherAPI.togglePiP(clientId);
+    }
+  };
+
+  // ⚡ Apply real-time status snapshot to UI (Pure Event-Driven)
+  function applyStatusData(data) {
+    if (!data) return;
+    cachedStatus = data;
+    const wasOffline = !isServerOnline;
+    const previousPort = currentServerPort;
+    if (data.port || data.serverPort) currentServerPort = data.port || data.serverPort;
+    isServerOnline = true;
+    dotServer.className = 'diag-indicator-dot online';
+    valServerStatus.textContent = 'Online (Ready)';
+    subServerInfo.textContent = 'Protected Local Engine';
+
+    updateStatusUI(data);
+
+    if (data.license) {
+      updateLicenseUI(data.license);
+    }
+
+    const offlinePlaceholder = document.getElementById('editor-offline-placeholder');
+    const isLicValid = currentLicenseState && currentLicenseState.isValid;
+    if (!isLicValid) {
+      if (editorFrame && editorFrame.src !== 'about:blank') {
+        editorFrame.src = 'about:blank';
+      }
+    } else {
+      // Auto-refresh/Load Studio iframe when Server comes Online or Port changes (ONLY when License IS VALID)
+      if (offlinePlaceholder) offlinePlaceholder.style.display = 'none';
+      const expectedOrigin = getServerUrl('');
+      const isFrameOriginMatching = editorFrame && editorFrame.src && (
+        editorFrame.src.startsWith(expectedOrigin) ||
+        editorFrame.src.startsWith(`http://localhost:${currentServerPort}`) ||
+        editorFrame.src.startsWith(`http://127.0.0.1:${currentServerPort}`)
+      );
+      const needsReload = wasOffline || (previousPort !== currentServerPort) || !editorFrame.src || editorFrame.src === 'about:blank' || !isFrameOriginMatching;
+      if (editorFrame && needsReload) {
+        if (!isStudioDirty) {
+          window.reloadEditorFrame();
+        }
+      }
+    }
+
+    // Render Client Matrix cards
+    renderLauncherClientCards(data, cachedConfig);
+
+    // Update Client Count
+    if (data.activeClients && Array.isArray(data.activeClients)) {
+      const curT = i18nDict[currentLang] || i18nDict.th;
+      valClientsCount.textContent = `${data.activeClients.length} ${curT.unitScreens || 'จอ'}`;
+      const badgeCount = document.getElementById('badge-clients-count');
+      const totalSlots = (cachedConfig && cachedConfig.globalSettings && Array.isArray(cachedConfig.globalSettings.clientSlots))
+        ? cachedConfig.globalSettings.clientSlots.length
+        : 8;
+      if (badgeCount) badgeCount.textContent = `${data.activeClients.length}/${totalSlots}`;
+    }
+
+    // Update Active Profile Name
+    if (data.activeProfiles && data.activeProfiles.length > 0) {
+      renderActiveProfiles(data.activeProfiles);
+    } else if (cachedConfig && cachedConfig.activeProfiles && cachedConfig.activeProfiles.length > 0) {
+      renderActiveProfiles(cachedConfig.activeProfiles);
+    } else if (cachedConfig && cachedConfig.activeProfile) {
+      renderActiveProfiles([cachedConfig.activeProfile]);
+    }
+  }
+
+  // Sync Diagnostics & Client Statuses from Backend API (Boot / On-demand)
+  async function syncBackendStatus() {
+    try {
+      const [statusRes, configRes] = await Promise.all([
+        fetch(getServerUrl('/api/status')).catch(() => null),
+        fetch(getServerUrl('/api/config')).catch(() => null)
+      ]);
+
+      if (configRes && configRes.ok) {
+        cachedConfig = await configRes.json();
+        loadSettingsToUI(cachedConfig);
+      }
+
+      if (statusRes && statusRes.ok) {
+        const data = await statusRes.json();
+        applyStatusData(data);
+      } else {
+        isServerOnline = false;
+        dotServer.className = 'diag-indicator-dot offline';
+        subServerInfo.textContent = 'Server Offline';
+        if (cachedConfig && cachedConfig.globalSettings && cachedConfig.globalSettings.webPort) {
+          currentServerPort = cachedConfig.globalSettings.webPort;
+        }
+        const offlinePlaceholder = document.getElementById('editor-offline-placeholder');
+        if (offlinePlaceholder && currentView === 'editor') {
+          renderEditorOfflineNormal();
+          offlinePlaceholder.style.display = 'flex';
+        }
+      }
+    } catch (e) {
+      isServerOnline = false;
+      dotServer.className = 'diag-indicator-dot offline';
+      subServerInfo.textContent = 'Server Offline';
+      if (cachedConfig && cachedConfig.globalSettings && cachedConfig.globalSettings.webPort) {
+        currentServerPort = cachedConfig.globalSettings.webPort;
+      }
+      const offlinePlaceholder = document.getElementById('editor-offline-placeholder');
+      if (offlinePlaceholder && currentView === 'editor') {
+        renderEditorOfflineNormal();
+        offlinePlaceholder.style.display = 'flex';
+      }
+    }
+  }
+
+  // ⚡ Pure Event-Driven Real-time Updates via SSE Stream (Zero Polling Loop)
+  if (window.launcherAPI && window.launcherAPI.onStatusChange) {
+    window.launcherAPI.onStatusChange((statusData) => {
+      if (statusData) {
+        applyStatusData(statusData);
+      }
+    });
+  }
+
+  // Initial single sync on startup
+  syncBackendStatus();
+
+  // 5. Button Action Handlers
+  if (btnToggleEngine) {
+    btnToggleEngine.onclick = async () => {
+      if (isRestarting) return;
+      if (isRunning) {
+        setBtnLoading('Stopping...');
+        await api.stopBot();
+        await syncBackendStatus();
+      } else {
+        if (currentLicenseState && !currentLicenseState.isValid) {
+          const isSuspended = (currentLicenseState.status || '').toLowerCase() === 'suspended';
+          window.showToast(
+            isSuspended
+              ? 'สิทธิ์การใช้งานถูกระงับชั่วคราวโดยผู้ดูแลระบบ (Suspended)\nกรุณาติดต่อแอดมิน หรือกดปุ่ม Sync Cloud ในแท็บ Settings'
+              : 'จำเป็นต้องมี License ที่ถูกต้องก่อนเริ่มใช้งานบอท\nกรุณาลงทะเบียน License Key ในแท็บ Settings',
+            isSuspended ? 'warning' : 'error',
+            isSuspended ? 'สิทธิ์ถูกระงับ (Suspended) 🟡' : 'จำเป็นต้องมี License 🔒',
+            5000
+          );
+          switchView('settings');
+          return;
+        }
+        setBtnLoading('Starting...');
+        await api.startBot();
+        await syncBackendStatus();
+      }
+    };
+  }
+
+  if (btnOpenLogs) {
+    btnOpenLogs.onclick = () => api.openLogFolder();
+  }
+
+  // 6. UI State Setters
+  function setBtnLoading(msg) {
+    btnToggleEngine.className = 'btn-toggle-engine-sidebar btn-restarting';
+    heroIcon.textContent = '⏳';
+    heroTitle.textContent = msg;
+    heroSub.textContent = 'Please wait...';
+  }
+
+  function updateStatusUI(status) {
+    if (!status) return;
+    const curT = i18nDict[currentLang] || i18nDict.th;
+    isRunning = (status.running !== undefined) ? !!status.running : !!status.isRunning;
+    isRestarting = !!status.restarting;
+    const isSuspended = !!status.isSuspended;
+
+    if (isRestarting) {
+      btnToggleEngine.className = 'btn-toggle-engine-sidebar btn-restarting';
+      heroIcon.textContent = '🔄';
+      heroTitle.textContent = curT.statusRestarting;
+      heroSub.textContent = 'Restarting Engine';
+
+      dotEngine.className = 'diag-indicator-dot pending';
+      valEngineStatus.textContent = curT.statusRestarting;
+      subEngineInfo.textContent = 'Reloading processes';
+    } else if (isRunning) {
+      btnToggleEngine.className = 'btn-toggle-engine-sidebar running';
+      heroIcon.textContent = '⏹';
+      heroTitle.textContent = curT.btnStopEngine;
+      heroSub.textContent = 'Stop Bot Engine';
+
+      if (isSuspended) {
+        dotEngine.className = 'diag-indicator-dot pending';
+        valEngineStatus.textContent = currentLang === 'en' ? '⏸️ Paused (END)' : '⏸️ พักชั่วคราว (กด END เพื่อรันต่อ)';
+        subEngineInfo.textContent = currentLang === 'en' ? 'Action Nodes Suspended' : 'หยุดส่ง Action Node ชั่วคราว';
+      } else {
+        dotEngine.className = 'diag-indicator-dot online';
+        valEngineStatus.textContent = curT.statusRunning;
+        if (!uptimeInterval) {
+          startTime = Date.now();
+          uptimeInterval = setInterval(updateUptime, 1000);
+        }
+      }
+    } else {
+      if (currentLicenseState && !currentLicenseState.isValid) {
+        const isSuspended = (currentLicenseState.status || '').toLowerCase() === 'suspended';
+        btnToggleEngine.className = isSuspended ? 'btn-toggle-engine-sidebar btn-suspended' : 'btn-toggle-engine-sidebar btn-locked';
+        heroIcon.textContent = '🔒';
+        heroTitle.textContent = isSuspended ? 'สิทธิ์ถูกระงับ' : 'ต้องมี License';
+        heroSub.textContent = isSuspended ? 'Suspended' : 'License Required';
+      } else {
+        btnToggleEngine.className = 'btn-toggle-engine-sidebar btn-start';
+        heroIcon.textContent = '▶';
+        heroTitle.textContent = curT.btnStartEngine;
+        heroSub.textContent = 'Start Bot Engine';
+      }
+
+      dotEngine.className = 'diag-indicator-dot offline';
+      valEngineStatus.textContent = curT.statusStopped;
+      subEngineInfo.textContent = 'Process Stopped';
+      if (uptimeInterval) {
+        clearInterval(uptimeInterval);
+        uptimeInterval = null;
+      }
+      if (currentLicenseState && !currentLicenseState.isValid) {
+        const offlinePlaceholder = document.getElementById('editor-offline-placeholder');
+        if (offlinePlaceholder && currentView === 'editor') {
+          renderEditorLicenseLocked();
+          offlinePlaceholder.style.display = 'flex';
+        }
+      }
+    }
+  }
+
+  if (api && typeof api.onStatusChange === 'function') {
+    api.onStatusChange((status) => {
+      if (typeof status === 'string') {
+        updateStatusUI({ running: status === 'running' });
+      } else {
+        updateStatusUI(status);
+      }
+    });
+  }
+
+  function updateUptime() {
+    if (!isRunning) return;
+    const diffSec = Math.floor((Date.now() - startTime) / 1000);
+    const m = Math.floor(diffSec / 60);
+    const s = diffSec % 60;
+    const timeStr = m > 0 ? `${m}m ${s}s` : `${s}s`;
+    subEngineInfo.textContent = `Uptime: ${timeStr}`;
+  }
+
+  // 5. Real-time Terminal Log Appender
+  function appendLogEntry(data) {
+    if (!data) return;
+    totalLogs++;
+    logCounterBadge.textContent = `${totalLogs} Lines`;
+
+    const logText = data.text || data.message || '';
+    const logLevel = (data.level || 'info').toLowerCase();
+
+    const row = document.createElement('div');
+    row.className = `log-row ${logLevel}`;
+    row.dataset.level = logLevel;
+    row.dataset.text = logText.toLowerCase();
+
+    function checkLogMatchFilter(lvl, flt) {
+      if (flt === 'all') return true;
+      if (flt === 'action') return lvl === 'action';
+      if (flt === 'log') return lvl === 'log' || lvl === 'step';
+      if (flt === 'system') return lvl === 'system' || lvl === 'info';
+      if (flt === 'error') return lvl === 'error';
+      if (flt === 'warn') return lvl === 'warn' || lvl === 'warning';
+      return lvl === flt;
+    }
+
+    // Check filter match
+    const matchesFilter = checkLogMatchFilter(logLevel, currentFilter);
+    const matchesSearch = !searchQuery || row.dataset.text.includes(searchQuery);
+
+    if (!matchesFilter || !matchesSearch) {
+      row.style.display = 'none';
+    }
+
+    const timeEl = document.createElement('span');
+    timeEl.className = 'log-time';
+    if (data.time) {
+      timeEl.textContent = data.time;
+    } else if (data.timestamp) {
+      const ts = data.timestamp > 10000000000 ? data.timestamp : data.timestamp * 1000;
+      timeEl.textContent = new Date(ts).toLocaleTimeString();
+    } else {
+      timeEl.textContent = new Date().toLocaleTimeString();
+    }
+
+    const badgeEl = document.createElement('span');
+    badgeEl.className = `log-badge ${logLevel}`;
+    let badgeText = logLevel.toUpperCase();
+    if (logLevel === 'log' || logLevel === 'step') badgeText = 'LOG';
+    else if (logLevel === 'system') badgeText = 'SYSTEM';
+    else if (logLevel === 'action') badgeText = 'ACTION';
+    badgeEl.textContent = badgeText;
+
+    const textEl = document.createElement('span');
+    textEl.className = 'log-text';
+    textEl.textContent = logText;
+
+    row.appendChild(timeEl);
+    row.appendChild(badgeEl);
+    row.appendChild(textEl);
+
+    logEntries.appendChild(row);
+
+    // Limit maximum DOM nodes in terminal
+    if (logEntries.children.length > 800) {
+      logEntries.removeChild(logEntries.firstElementChild);
+    }
+
+    if (autoScroll) {
+      terminalBody.scrollTop = terminalBody.scrollHeight;
+    }
+  }
+
+  // 6. Terminal Filtering & Search
+  function applyLogFilters() {
+    function checkLogMatchFilter(lvl, flt) {
+      if (flt === 'all') return true;
+      if (flt === 'action') return lvl === 'action';
+      if (flt === 'log') return lvl === 'log' || lvl === 'step';
+      if (flt === 'system') return lvl === 'system' || lvl === 'info';
+      if (flt === 'error') return lvl === 'error';
+      if (flt === 'warn') return lvl === 'warn' || lvl === 'warning';
+      return lvl === flt;
+    }
+
+    const rows = logEntries.querySelectorAll('.log-row');
+    rows.forEach(r => {
+      const level = r.dataset.level || 'info';
+      const text = r.dataset.text || '';
+      const matchesFilter = checkLogMatchFilter(level, currentFilter);
+      const matchesSearch = !searchQuery || text.includes(searchQuery);
+      r.style.display = (matchesFilter && matchesSearch) ? 'flex' : 'none';
+    });
+
+    if (autoScroll) {
+      terminalBody.scrollTop = terminalBody.scrollHeight;
+    }
+  }
+
+  filterPills.forEach(pill => {
+    pill.addEventListener('click', () => {
+      filterPills.forEach(p => p.classList.remove('active'));
+      pill.classList.add('active');
+      currentFilter = pill.dataset.filter || 'all';
+      applyLogFilters();
+    });
+  });
+
+  if (logSearchInput) {
+    logSearchInput.addEventListener('input', (e) => {
+      searchQuery = (e.target.value || '').toLowerCase().trim();
+      applyLogFilters();
+    });
+  }
+
+  if (btnToggleAutoscroll) {
+    btnToggleAutoscroll.onclick = () => {
+      autoScroll = !autoScroll;
+      btnToggleAutoscroll.classList.toggle('active', autoScroll);
+      if (autoScroll) {
+        terminalBody.scrollTop = terminalBody.scrollHeight;
+      }
+    };
+  }
+
+  if (btnClearTerminal) {
+    btnClearTerminal.onclick = () => {
+      logEntries.innerHTML = '';
+      totalLogs = 0;
+      logCounterBadge.textContent = `0 Lines`;
+    };
+  }
+
+  // 7. Diagnostics Data Listener
+  api.onDiagnosticsUpdate((diag) => {
+    if (!diag || typeof diag.serverOnline !== 'boolean') return;
+    const wasOffline = !isServerOnline;
+    const previousPort = currentServerPort;
+    isServerOnline = diag.serverOnline;
+
+    if (diag.serverOnline) {
+      if (diag.port) currentServerPort = diag.port;
+      dotServer.className = 'diag-indicator-dot online';
+      valServerStatus.textContent = 'Online (Ready)';
+      subServerInfo.textContent = 'Protected Local Engine';
+      if (tabEditorDot) tabEditorDot.className = 'tab-live-dot online';
+      const offlinePlaceholder = document.getElementById('editor-offline-placeholder');
+      if (offlinePlaceholder && (!currentLicenseState || currentLicenseState.isValid)) {
+        offlinePlaceholder.style.display = 'none';
+      }
+
+      // Auto-reload Action Node Studio if server came online, port changed, or url mismatched
+      const expectedOrigin = getServerUrl('');
+      const isFrameOriginMatching = editorFrame && editorFrame.src && (
+        editorFrame.src.startsWith(expectedOrigin) ||
+        editorFrame.src.startsWith(`http://localhost:${currentServerPort}`) ||
+        editorFrame.src.startsWith(`http://127.0.0.1:${currentServerPort}`)
+      );
+      const isLicValid = currentLicenseState && currentLicenseState.isValid;
+      const needsReload = wasOffline || (diag.port && diag.port !== previousPort) || !editorFrame.src || editorFrame.src === 'about:blank' || !isFrameOriginMatching;
+      if (editorFrame && needsReload && isLicValid) {
+        if (!isStudioDirty) {
+          window.reloadEditorFrame();
+        }
+      }
+    } else {
+      dotServer.className = 'diag-indicator-dot offline';
+      valServerStatus.textContent = `Offline`;
+      subServerInfo.textContent = diag.error || 'Protected Local Engine (Offline)';
+      if (tabEditorDot) tabEditorDot.className = 'tab-live-dot';
+      const offlinePlaceholder = document.getElementById('editor-offline-placeholder');
+      if (offlinePlaceholder && currentView === 'editor') {
+        offlinePlaceholder.style.display = 'flex';
+      }
+    }
+
+    if (diag.activeProfiles && diag.activeProfiles.length > 0) {
+      renderActiveProfiles(diag.activeProfiles);
+    }
+
+    if (diag.activeClientsCount !== undefined) {
+      const curT = i18nDict[currentLang] || i18nDict.th;
+      valClientsCount.textContent = `${diag.activeClientsCount} ${curT.unitScreens || 'จอ'}`;
+      subClientsInfo.textContent = diag.activeClientsCount > 0 ? '🟢 Connected Clients' : 'No clients attached';
+    }
+  });
+
+  // 8. Smart 3-Step Update Wizard Logic
+  function renderWizardSteps(activeStep) {
+    const isEn = currentLang === 'en';
+    const s1 = isEn ? 'Check' : 'ตรวจสอบ';
+    const s2 = isEn ? 'Install' : 'ติดตั้ง';
+    const s3 = isEn ? 'Ready' : 'ใช้งาน';
+    return `
+      <div class="wizard-header-steps">
+        <div class="wizard-step-item ${activeStep === 1 ? 'active' : activeStep > 1 ? 'completed' : ''}">
+          <span class="wizard-step-num">${activeStep > 1 ? '✓' : '1'}</span>
+          <span>${s1}</span>
+        </div>
+        <div class="wizard-step-divider"></div>
+        <div class="wizard-step-item ${activeStep === 2 ? 'active' : activeStep > 2 ? 'completed' : ''}">
+          <span class="wizard-step-num">${activeStep > 2 ? '✓' : '2'}</span>
+          <span>${s2}</span>
+        </div>
+        <div class="wizard-step-divider"></div>
+        <div class="wizard-step-item ${activeStep === 3 ? 'active' : ''}">
+          <span class="wizard-step-num">${activeStep === 3 ? '✓' : '3'}</span>
+          <span>${s3}</span>
+        </div>
+      </div>
+    `;
+  }
+
+  function renderFileList(files = []) {
+    if (!files || files.length === 0) return '';
+    const isEn = currentLang === 'en';
+    const t = i18nDict[currentLang] || i18nDict.th;
+    const fileItems = files.slice(0, 30).map(f => `
+      <div class="changed-file-item">
+        <span class="changed-file-icon">📄</span>
+        <span>${f}</span>
+      </div>
+    `).join('');
+    const extraCount = files.length > 30 
+      ? `<div style="font-size:10px; opacity:0.6; padding-top:2px;">${(t.btnUpdateFilesMore || '... and {count} more files').replace('{count}', files.length - 30)}</div>` 
+      : '';
+    return `
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-top:8px; margin-bottom:4px; font-size:11px;">
+        <span style="color:#94a3b8; font-weight:600;">📁 ${t.btnUpdateFilesLabel || 'Total Changed Files:'}</span>
+        <span style="color:#64748b; font-size:10px;">${files.length} ${isEn ? 'files' : 'ไฟล์'}</span>
+      </div>
+      <div class="changed-files-box" style="max-height:120px; overflow-y:auto;">
+        ${fileItems}
+        ${extraCount}
+      </div>
+    `;
+  }
+
+  function renderStep1CheckResult(result) {
+    currentModalState = { type: 'step1_result', data: result };
+    const isEn = currentLang === 'en';
+    const t = i18nDict[currentLang] || i18nDict.th;
+
+    if (result.error) {
+      updateModalBody.innerHTML = `
+        ${renderWizardSteps(1)}
+        <div style="color:#ef4444; font-weight:700; margin-bottom:6px;">${t.btnUpdateCheckErr || '⚠️ Error checking for updates:'}</div>
+        <div style="font-size:11px; opacity:0.8;">${result.error}</div>
+      `;
+      btnPerformUpdate.style.display = 'none';
+      btnCancelUpdate.disabled = false;
+      btnCancelUpdate.textContent = t.btnClose || 'Close';
+    } else if (result.hasUpdate) {
+      const impact = result.impact || { badge: 'Update Available', badgeClass: 'level-ui', description: 'New updates available' };
+      const badgeText = (isEn ? impact.badge_en : impact.badge_th) || impact.badge;
+      const descText = (isEn ? impact.description_en : impact.description_th) || impact.description;
+      const hasMultipleCommits = result.commitsList && result.commitsList.length > 1;
+      updateModalBody.innerHTML = `
+        ${renderWizardSteps(1)}
+        <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:8px;">
+          <div style="color:#10b981; font-weight:700; font-size:13px;">🎉 ${t.btnUpdateHasNewTitle || 'Update Available!'}</div>
+          <span class="impact-badge ${impact.badgeClass}">${badgeText}</span>
+        </div>
+        <div style="background:rgba(0,0,0,0.3); border:1px solid rgba(255,255,255,0.08); border-radius:6px; padding:8px 10px; margin:6px 0; font-family:'JetBrains Mono'; font-size:11px;">
+          <div style="display:flex; justify-content:space-between; align-items:center;">
+            <div>Local: <strong>${result.localHash}</strong> ➔ Remote: <strong>${result.remoteHash}</strong></div>
+            ${result.commitCount > 1 ? `<span style="background:rgba(96,165,250,0.15); color:#60a5fa; border:1px solid rgba(96,165,250,0.3); padding:1px 6px; border-radius:4px; font-size:10px; font-weight:600;">${result.commitCount} Commits</span>` : ''}
+          </div>
+          ${hasMultipleCommits ? `
+            <div style="margin-top:6px; max-height:85px; overflow-y:auto; display:flex; flex-direction:column; gap:3px; padding-right:4px;">
+              ${result.commitsList.map(c => `
+                <div style="font-size:10.5px; display:flex; gap:6px; align-items:baseline;">
+                  <span style="color:#f59e0b; font-weight:600; flex-shrink:0;">${c.sha}</span>
+                  <span style="color:#93c5fd; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;">${c.message}</span>
+                </div>
+              `).join('')}
+            </div>
+          ` : `
+            <div style="color:#60a5fa; margin-top:4px;">"${result.commitMessage || (isEn ? 'New features & improvements' : 'ปรับปรุงประสิทธิภาพและเพิ่มฟีเจอร์ใหม่')}"</div>
+          `}
+        </div>
+        ${impact.hasDependencyChanges ? `
+          <div style="background:rgba(14, 165, 233, 0.15); border:1px solid rgba(14, 165, 233, 0.4); border-radius:6px; padding:10px; margin:8px 0; color:#bae6fd; font-size:11.5px; line-height:1.45;">
+            <div style="font-weight:700; display:flex; align-items:center; gap:6px; margin-bottom:4px; color:#38bdf8;">
+              <span>⚡ ${t.btnUpdateDepTitle}</span>
+            </div>
+            <div>${t.btnUpdateDepDesc}</div>
+          </div>
+        ` : ''}
+        <div style="font-size:11px; color:#cbd5e1; margin-top:6px;">💡 <strong>${t.btnUpdateImpactLabel || 'Impact:'}</strong> ${descText}</div>
+        ${renderFileList(result.changedFiles)}
+      `;
+      btnPerformUpdate.style.display = 'block';
+      btnPerformUpdate.disabled = false;
+      btnPerformUpdate.textContent = t.btnStep1Download || '📥 Step 1: Download Package';
+      btnPerformUpdate.onclick = () => handleStep1Download();
+      btnCancelUpdate.disabled = false;
+      btnCancelUpdate.textContent = t.btnCancel || 'Cancel';
+    } else {
+      updateModalBody.innerHTML = `
+        ${renderWizardSteps(1)}
+        <div style="color:#10b981; font-weight:700; font-size:13px; margin-bottom:4px;">✅ ${t.btnUpdateNoUpdate || 'System is up to date!'}</div>
+        <div style="font-size:11px; opacity:0.8;">${(t.btnUpdateNoUpdateDesc || 'Current Commit: <code>{hash}</code> (Up to date)').replace('{hash}', result.localHash)}</div>
+      `;
+      btnPerformUpdate.style.display = 'none';
+      btnCancelUpdate.disabled = false;
+      btnCancelUpdate.textContent = t.btnClose || 'Close';
+    }
+  }
+
+  async function checkUpdateSilentlyOnStartup() {
+    try {
+      if (!api || typeof api.checkUpdate !== 'function') return;
+      const result = await api.checkUpdate();
+      if (result && !result.error && result.hasUpdate) {
+        detectedUpdateInfo = result;
+        currentUpdateCheck = result;
+        renderUpdateToolButton(true, result);
+        console.log(`[Updater] Silent startup check: ${result.commitCount || 1} new commit(s) detected.`);
+      }
+    } catch (err) {
+      console.warn('[Updater] Silent startup check failed/offline:', err && err.message);
+    }
+  }
+
+  if (btnCheckUpdate) {
+    btnCheckUpdate.onclick = async () => {
+      const t = i18nDict[currentLang] || i18nDict.th;
+      updateModal.style.display = 'flex';
+      btnPerformUpdate.style.display = 'none';
+      btnPerformUpdate.disabled = false;
+      btnCancelUpdate.disabled = false;
+      btnCancelUpdate.textContent = t.btnCancel || 'Cancel';
+
+      if (currentUpdateCheck && currentUpdateCheck.hasUpdate) {
+        renderStep1CheckResult(currentUpdateCheck);
+        return;
+      }
+
+      currentModalState = { type: 'checking' };
+      updateModalBody.innerHTML = `
+        ${renderWizardSteps(1)}
+        <div style="display:flex; align-items:center; gap:10px; padding:12px 0;">
+          <div class="spinner"></div>
+          <span>${t.btnUpdateChecking || 'Checking update status and analyzing impact from GitHub...'}</span>
+        </div>
+      `;
+
+      try {
+        const result = await api.checkUpdate();
+        currentUpdateCheck = result;
+        if (result && !result.error && result.hasUpdate) {
+          detectedUpdateInfo = result;
+          renderUpdateToolButton(true, result);
+        } else {
+          detectedUpdateInfo = null;
+          renderUpdateToolButton(false);
+        }
+        renderStep1CheckResult(result);
+      } catch (err) {
+        currentModalState = { type: 'check_error', error: err.message };
+        updateModalBody.innerHTML = `
+          ${renderWizardSteps(1)}
+          <div style="color:#ef4444; font-weight:700;">❌ ${t.btnUpdateCheckErr || 'Error checking for updates:'}</div>
+          <div style="font-size:11px; opacity:0.8; margin-top:4px;">${err.message}</div>
+        `;
+        btnCancelUpdate.disabled = false;
+        btnCancelUpdate.textContent = t.btnClose || 'Close';
+      }
+    };
+  }
+
+  // Step 1 Handler: Download Package
+  async function handleStep1Download() {
+    const t = i18nDict[currentLang] || i18nDict.th;
+    currentModalState = { type: 'downloading' };
+    btnPerformUpdate.disabled = true;
+    btnCancelUpdate.disabled = true;
+    updateModalBody.innerHTML = `
+      ${renderWizardSteps(1)}
+      <div style="display:flex; align-items:center; gap:10px; padding:12px 0;">
+        <div class="spinner"></div>
+        <span>${t.btnUpdateDownloading || 'Downloading update package and preparing...'}</span>
+      </div>
+    `;
+
+    try {
+      const res = await api.downloadUpdate();
+      currentDownloadResult = res;
+      currentModalState = { type: 'download_complete', data: res };
+      const isEn = currentLang === 'en';
+      const impact = res.impact || (currentUpdateCheck && currentUpdateCheck.impact) || {};
+      const badgeText = (isEn ? impact.badge_en : impact.badge_th) || impact.badge || '';
+      const titleText = (isEn ? impact.title_en : impact.title_th) || impact.title || (isEn ? 'Live Application Update' : 'อัปเดตแอปพลิเคชัน');
+
+      updateModalBody.innerHTML = `
+        ${renderWizardSteps(2)}
+        <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:8px;">
+          <div style="color:#10b981; font-weight:700; font-size:13px;">✅ ${t.btnUpdateDownloadComplete || 'Package Download Complete!'}</div>
+          ${badgeText ? `<span class="impact-badge ${impact.badgeClass}">${badgeText}</span>` : ''}
+        </div>
+        <div style="font-size:11.5px; color:#cbd5e1; line-height:1.5;">
+          ${t.btnUpdateDownloadCompleteDesc || 'The update package is ready for installation. Click the button below to apply the update directly to the live system.'}
+        </div>
+        <div style="margin-top:10px; font-size:11px; color:#94a3b8;">
+          ⚙️ <strong>${t.btnUpdateLevelLabel || 'Update Level:'}</strong> ${titleText}
+        </div>
+      `;
+
+      btnPerformUpdate.style.display = 'block';
+      btnPerformUpdate.disabled = false;
+      btnPerformUpdate.textContent = t.btnStep2Apply || '⚡ Step 2: Apply Update';
+      btnCancelUpdate.disabled = false;
+      btnCancelUpdate.textContent = t.btnCancel || 'Cancel';
+      btnPerformUpdate.onclick = () => handleStep2Apply();
+    } catch (err) {
+      currentModalState = { type: 'download_failed', error: err.message };
+      updateModalBody.innerHTML = `
+        ${renderWizardSteps(1)}
+        <div style="color:#ef4444; font-weight:700;">❌ ${t.btnUpdateDownloadFailed || 'Download Failed:'}</div>
+        <div style="font-size:11px; opacity:0.8; margin-top:4px;">${err.message}</div>
+      `;
+      btnPerformUpdate.style.display = 'none';
+      btnCancelUpdate.disabled = false;
+      btnCancelUpdate.textContent = t.btnClose || 'Close';
+    }
+  }
+
+  // Step 2 Handler: Apply Package
+  async function handleStep2Apply() {
+    const t = i18nDict[currentLang] || i18nDict.th;
+    currentModalState = { type: 'applying' };
+    btnPerformUpdate.disabled = true;
+    btnCancelUpdate.disabled = true;
+    updateModalBody.innerHTML = `
+      ${renderWizardSteps(2)}
+      <div style="display:flex; align-items:center; gap:10px; padding:12px 0;">
+        <div class="spinner"></div>
+        <span>${t.btnUpdateApplying || 'Extracting files and applying update...'}</span>
+      </div>
+    `;
+
+    try {
+      const res = await api.applyUpdate();
+      const impact = res.impact || (currentDownloadResult && currentDownloadResult.impact) || { level: 1 };
+      detectedUpdateInfo = null;
+      currentUpdateCheck = null;
+      renderUpdateToolButton(false);
+      currentModalState = { type: 'apply_complete', impact: impact };
+
+      // Render Step 3 according to impact level
+      if (impact.level === 3) {
+        // Level 3: Core App Relaunch Required
+        updateModalBody.innerHTML = `
+          ${renderWizardSteps(3)}
+          <div style="color:#f87171; font-weight:700; font-size:13px; margin-bottom:6px;">🚀 ${t.btnUpdateCoreComplete}</div>
+          <div style="font-size:11.5px; color:#cbd5e1; line-height:1.5;">
+            ${t.btnUpdateCoreCompleteDesc}
+          </div>
+          ${impact.hasDependencyChanges ? `
+            <div style="margin-top:8px; background:rgba(16, 185, 129, 0.12); border:1px solid rgba(16, 185, 129, 0.3); border-radius:6px; padding:8px 10px; font-size:11px; color:#6ee7b7; line-height:1.4;">
+              ✅ <strong>${t.btnUpdateCoreDepSuccess}</strong>
+            </div>
+          ` : ''}
+        `;
+        btnPerformUpdate.style.display = 'block';
+        btnPerformUpdate.disabled = false;
+        btnPerformUpdate.className = 'btn-hero-primary';
+        btnPerformUpdate.textContent = t.btnRelaunchApp || '🚀 Restart App Now';
+        btnPerformUpdate.onclick = () => api.relaunchApp();
+
+        btnCancelUpdate.disabled = false;
+        btnCancelUpdate.textContent = t.btnLater || 'Later';
+      } else if (impact.level === 2) {
+        // Level 2: Bot Engine Update
+        updateModalBody.innerHTML = `
+          ${renderWizardSteps(3)}
+          <div style="color:#fbbf24; font-weight:700; font-size:13px; margin-bottom:6px;">🟡 ${t.btnUpdateEngineComplete}</div>
+          <div style="font-size:11.5px; color:#cbd5e1; line-height:1.5;">
+            ${t.btnUpdateEngineCompleteDesc}
+          </div>
+        `;
+        btnPerformUpdate.style.display = 'block';
+        btnPerformUpdate.disabled = false;
+        btnPerformUpdate.className = 'btn-hero-primary';
+        btnPerformUpdate.textContent = t.btnRestartEngineNow || '🔄 Restart Engine Now';
+        btnPerformUpdate.onclick = async () => {
+          btnPerformUpdate.disabled = true;
+          await api.restartEngine();
+          if (editorFrame) editorFrame.src = getServerUrl('/?t=' + Date.now());
+          updateModal.style.display = 'none';
+        };
+
+        btnCancelUpdate.disabled = false;
+        btnCancelUpdate.textContent = t.btnRestartLater || '⏳ Restart Later';
+      } else {
+        // Level 1: UI Only Hot-Reload
+        await api.hotReloadUi();
+        if (editorFrame) editorFrame.src = getServerUrl('/?t=' + Date.now());
+
+        updateModalBody.innerHTML = `
+          ${renderWizardSteps(3)}
+          <div style="color:#34d399; font-weight:700; font-size:13px; margin-bottom:6px;">✨ ${t.btnUpdateUiComplete}</div>
+          <div style="font-size:11.5px; color:#cbd5e1; line-height:1.5;">
+            ${t.btnUpdateUiCompleteDesc}
+          </div>
+        `;
+        btnPerformUpdate.style.display = 'none';
+        btnCancelUpdate.disabled = false;
+        btnCancelUpdate.textContent = t.btnDone || 'Done';
+      }
+    } catch (err) {
+      currentModalState = { type: 'apply_failed', error: err.message };
+      updateModalBody.innerHTML = `
+        ${renderWizardSteps(2)}
+        <div style="color:#ef4444; font-weight:700;">❌ ${t.btnUpdateApplyFailed || 'Installation Failed:'}</div>
+        <div style="font-size:11px; opacity:0.8; margin-top:4px;">${err.message}</div>
+      `;
+      btnPerformUpdate.style.display = 'none';
+      btnCancelUpdate.disabled = false;
+      btnCancelUpdate.textContent = t.btnClose || 'Close';
+    }
+  }
+
+  if (btnCloseUpdateModal) btnCloseUpdateModal.onclick = () => updateModal.style.display = 'none';
+  if (btnCancelUpdate) btnCancelUpdate.onclick = () => updateModal.style.display = 'none';
+
+  // 9. Listeners from Electron Main Process
+  if (api.onHotReload) {
+    api.onHotReload(() => {
+      if (editorFrame) {
+        editorFrame.src = getServerUrl('/?t=' + Date.now());
+      }
+      setTimeout(() => {
+        window.location.reload();
+      }, 500);
+    });
+  }
+
+  api.onLogMessage((data) => {
+    appendLogEntry(data);
+  });
+
+  api.onStatusChange((status) => {
+    updateStatusUI(status);
+  });
+
+  // 10. Initial Load
+  applyLanguage(currentLang);
+  refreshStorageStats();
+
+  api.getBotStatus().then(status => {
+    updateStatusUI(status);
+    if (status.logPath && footerLogPath) {
+      footerLogPath.textContent = status.logPath;
+    }
+  });
+
+  api.getLogPath().then(path => {
+    if (footerLogPath && path) footerLogPath.textContent = path;
+  });
+
+  // 🔑 Active License Key Clipboard & Management
+  window.copyActiveKeyToClipboard = function() {
+    const textEl = document.getElementById('active-license-key-text');
+    if (!textEl || !textEl.textContent || textEl.textContent === '-' || !textEl.textContent.trim()) return;
+    navigator.clipboard.writeText(textEl.textContent.trim()).then(() => {
+      const btn = document.getElementById('btn-copy-active-key');
+      if (btn) {
+        const originalText = btn.innerHTML;
+        btn.innerHTML = '✅ คัดลอกแล้ว!';
+        btn.style.color = '#4ade80';
+        btn.style.borderColor = '#4ade80';
+        setTimeout(() => {
+          btn.innerHTML = originalText;
+          btn.style.color = '#a7f3d0';
+          btn.style.borderColor = '#10b981';
+        }, 1800);
+      }
+    }).catch(err => {
+      console.error('Copy key failed:', err);
+    });
+  };
+
+  // 🛡️ License Guard Gatekeeper Helpers
+  function setSidebarNavigationEnabled(enabled) {
+    const sidebarNav = document.querySelector('.sidebar-menu-list');
+    const engineBtn = document.getElementById('btn-toggle-engine');
+    if (sidebarNav) {
+      if (enabled) {
+        sidebarNav.style.pointerEvents = 'auto';
+        sidebarNav.style.opacity = '1';
+        sidebarNav.style.filter = 'none';
+      } else {
+        sidebarNav.style.pointerEvents = 'none';
+        sidebarNav.style.opacity = '0.35';
+        sidebarNav.style.filter = 'grayscale(0.7)';
+      }
+    }
+    if (engineBtn) {
+      if (enabled) {
+        engineBtn.style.pointerEvents = 'auto';
+        engineBtn.style.opacity = '1';
+      } else {
+        engineBtn.style.pointerEvents = 'none';
+        engineBtn.style.opacity = '0.4';
+      }
+    }
+  }
+
+  window.copyGuardHWID = function() {
+    const el = document.getElementById('guard-hwid-text');
+    const hwid = el ? el.textContent.trim() : '';
+    if (hwid && hwid !== 'กำลังโหลด HWID...') {
+      navigator.clipboard.writeText(hwid).then(() => {
+        window.showToast('คัดลอกรหัส HWID ลงคลิปบอร์ดแล้ว', 'success', 'คัดลอกสำเร็จ 📋');
+      }).catch(() => {
+        window.showToast('ไม่สามารถคัดลอกได้อัตโนมัติ กรุณาคลุมดำเพื่อคัดลอก', 'warning', 'แจ้งเตือน');
+      });
+    }
+  };
+
+  window.activateLicenseFromGuard = async function() {
+    const input = document.getElementById('guard-license-input');
+    const btn = document.getElementById('btn-guard-activate-license');
+    if (!input || !input.value.trim()) {
+      window.showToast('กรุณาวาง License Key ก่อนกด Activate', 'warning', 'ระบุ License Key');
+      return;
+    }
+
+    const key = input.value.trim();
+    if (btn) {
+      btn.disabled = true;
+      btn.innerHTML = '<span>⏳</span> <span>Checking...</span>';
+    }
+
+    try {
+      const res = await fetch(getServerUrl('/api/security/license/activate'), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ licenseKey: key })
+      });
+      const data = await res.json();
+      if (data && data.success) {
+        try { localStorage.setItem('nhk_active_serial_v4', key); } catch (e) {}
+        window.showToast(`เปิดใช้งาน License สำเร็จ! ระดับ: ${data.tier || 'PRO'}`, 'success', 'สำเร็จ 🎉');
+        if (data.licenseStatus) {
+          if (!data.licenseStatus.activeKey) data.licenseStatus.activeKey = key;
+          window.updateLicenseUI(data.licenseStatus);
+        } else {
+          window.loadLicenseStatus();
+        }
+        input.value = '';
+      } else {
+        window.showToast(data.error || 'Invalid license key', 'error', 'ไม่สามารถเปิดใช้งานได้ ❌');
+      }
+    } catch (e) {
+      window.showToast(`เกิดข้อผิดพลาดในการเชื่อมต่อ: ${e.message}`, 'error', 'เชื่อมต่อล้มเหลว ❌');
+    } finally {
+      if (btn) {
+        btn.disabled = false;
+        btn.innerHTML = '<span>✨</span> <span>Activate</span>';
+      }
+    }
+  };
+
+  // Deprecated HWID stubs (no-op)
+  window.loadHwidDetails = function() {};
+  window.copyHwidToClipboard = window.copyGuardHWID;
+
+  // 🔑 License Activation & Status
+  function updateLicenseUI(lic) {
+    if (!lic) return;
+    const isValid = !!(lic.isValid || lic.is_valid);
+    const status = lic.status || (isValid ? 'Active' : 'Unlicensed');
+    currentLicenseState = { ...lic, isValid, status };
+
+    // 🛡️ Gatekeeper Screen Sync
+    const guardOverlay = document.getElementById('license-guard-overlay');
+    const guardUnlicensedSection = document.getElementById('guard-unlicensed-section');
+    const guardSuspendedSection = document.getElementById('guard-suspended-section');
+    const guardStatusIcon = document.getElementById('guard-status-icon');
+    const guardStatusTitle = document.getElementById('guard-status-title');
+    const guardStatusDesc = document.getElementById('guard-status-desc');
+    const guardHwidText = document.getElementById('guard-hwid-text');
+    const guardSuspendedKeyDisplay = document.getElementById('guard-suspended-key-display');
+
+    const currentHwid = lic.hwid || (window.currentHWIDString || '');
+    if (guardHwidText && currentHwid) {
+      guardHwidText.textContent = currentHwid;
+    }
+
+    const badge = document.getElementById('license-status-badge');
+    const tierText = document.getElementById('license-tier-text');
+    const expiryText = document.getElementById('license-expiry-text');
+    const cardBox = document.getElementById('license-card-box');
+    const keyRow = document.getElementById('license-key-display-row');
+    const keyText = document.getElementById('active-license-key-text');
+    const inputRow = document.getElementById('license-input-row');
+    const checkRow = document.getElementById('license-check-status-row');
+
+    const isSuspended = status.toLowerCase() === 'suspended';
+    const isUnlicensed = !isValid && !isSuspended;
+
+    // 0. Update Active Key display & localStorage
+    let activeKey = lic.activeKey || lic.active_key;
+    if (!activeKey && !isUnlicensed) {
+      activeKey = localStorage.getItem('nhk_active_serial_v4');
+    }
+
+    // 3. หาก key ถูกลบ หรือสถานะเป็น Unlicensed: ข้อมูล key ทั้งหมดในโปรแกรมจะถูกลบออกไป ไม่แสดงผล
+    if (isUnlicensed) {
+      activeKey = null;
+      try { localStorage.removeItem('nhk_active_serial_v4'); } catch (e) {}
+    } else if (activeKey && activeKey !== '-') {
+      try { localStorage.setItem('nhk_active_serial_v4', activeKey); } catch (e) {}
+    }
+
+    const hasKey = !!(activeKey && activeKey !== '-' && !isUnlicensed);
+
+    // ควบคุมการแสดงผลตามข้อกำหนด:
+    // หากยังไม่มี key (หรือ key ถูกลบ): แสดงแค่ input
+    // หากเคยมีแล้ว: ไม่ต้องแสดง input ให้มีแค่ปุ่มสำหรับตรวจสอบ (ตามสถานะ)
+    if (hasKey) {
+      if (inputRow) inputRow.style.display = 'none';
+      if (keyRow) keyRow.style.display = 'flex';
+      if (keyText) keyText.textContent = activeKey;
+
+      if (checkRow) {
+        if (isValid) {
+          // 1. key สถานะปกติ: ปุ่มจะไม่แสดงผล หรือ กดใช้งานไม่ได้
+          checkRow.style.display = 'none';
+        } else if (isSuspended) {
+          // 2. key ถูกหยุดใช้งานชั่วคราว: จะมีปุ่มให้กดสำหรับ ตรวจสอบสถานะ หรือ refresh สถานะ
+          checkRow.style.display = 'flex';
+          if (window.updateLicenseCheckButtonState) window.updateLicenseCheckButtonState();
+        } else {
+          checkRow.style.display = 'none';
+        }
+      }
+    } else {
+      // 3. key ถูกลบ หรือยังไม่เคยลงทะเบียน: กลับไปเป็นสถานะรอกรอกข้อมูล key ใน input
+      if (inputRow) inputRow.style.display = 'flex';
+      if (keyRow) keyRow.style.display = 'none';
+      if (keyText) keyText.textContent = '-';
+      if (checkRow) checkRow.style.display = 'none';
+    }
+
+    // 1. Update Settings Tab Card
+    if (isValid) {
+      const tier = lic.tier || 'PRO';
+      if (badge) {
+        badge.innerHTML = `🟢 ${tier} Active`;
+        badge.style.background = 'rgba(16, 185, 129, 0.2)';
+        badge.style.color = '#34d399';
+        badge.style.borderColor = 'rgba(16, 185, 129, 0.4)';
+      }
+      if (tierText) tierText.textContent = `สถานะ: สิทธิ์การใช้งาน ${tier} (ถูกต้อง)`;
+      if (expiryText) {
+        const expiresAt = lic.expiresAt !== undefined ? lic.expiresAt : lic.expires_at;
+        const daysRemaining = lic.daysRemaining !== undefined ? lic.daysRemaining : lic.days_remaining;
+        if (expiresAt === -1 || daysRemaining >= 9000) {
+          expiryText.textContent = `อายุการใช้งาน: ตลอดชีพ (Lifetime License)`;
+        } else {
+          expiryText.textContent = `อายุการใช้งาน: เหลืออีก ${daysRemaining || 0} วัน`;
+        }
+      }
+      if (cardBox) {
+        cardBox.style.borderColor = 'rgba(16, 185, 129, 0.5)';
+        cardBox.style.background = 'rgba(6, 78, 59, 0.25)';
+      }
+    } else {
+      if (badge) {
+        badge.innerHTML = isSuspended ? `🟡 Suspended (ระงับชั่วคราว)` : `🔴 ${status}`;
+        badge.style.background = isSuspended ? 'rgba(245, 158, 11, 0.2)' : 'rgba(239, 68, 68, 0.2)';
+        badge.style.color = isSuspended ? '#fbbf24' : '#f87171';
+        badge.style.borderColor = isSuspended ? 'rgba(245, 158, 11, 0.4)' : 'rgba(239, 68, 68, 0.4)';
+      }
+      if (tierText) {
+        tierText.textContent = isSuspended
+          ? `สถานะ: สิทธิ์ถูกระงับชั่วคราวโดยผู้ดูแลระบบ (Suspended)`
+          : `สถานะ: ยังไม่มี License (${status})`;
+      }
+      if (expiryText) {
+        expiryText.textContent = isSuspended
+          ? 'กรุณาติดต่อผู้ดูแลระบบเพื่อปลดระงับ หรือกดปุ่ม "ตรวจสอบสถานะล่าสุด" ด้านล่าง'
+          : 'จำเป็นต้องลงทะเบียน License เพื่อปลดล็อคการเปิดใช้งานบอท';
+      }
+      if (cardBox) {
+        cardBox.style.borderColor = isSuspended ? 'rgba(245, 158, 11, 0.5)' : 'rgba(239, 68, 68, 0.4)';
+        cardBox.style.background = isSuspended ? 'rgba(120, 53, 15, 0.25)' : 'rgba(69, 10, 10, 0.2)';
+      }
+    }
+
+    // 🛡️ Synchronize Full License Guard Gatekeeper Overlay
+    if (isValid) {
+      if (guardOverlay) guardOverlay.style.display = 'none';
+      setSidebarNavigationEnabled(true);
+      if (breadcrumbEl && breadcrumbEl.textContent.includes('License Guard')) {
+        const curT = i18nDict[currentLang] || i18nDict.th;
+        breadcrumbEl.textContent = curT.breadcrumbDashboard || 'Dashboard & Clients';
+      }
+    } else {
+      if (guardOverlay) guardOverlay.style.display = 'flex';
+      setSidebarNavigationEnabled(false);
+      if (breadcrumbEl) breadcrumbEl.textContent = '🛡️ License Guard';
+      if (editorFrame && editorFrame.src && editorFrame.src !== 'about:blank') {
+        editorFrame.src = 'about:blank';
+      }
+
+      if (isSuspended) {
+        if (guardUnlicensedSection) guardUnlicensedSection.style.display = 'none';
+        if (guardSuspendedSection) guardSuspendedSection.style.display = 'block';
+        if (guardStatusIcon) guardStatusIcon.textContent = '🟡';
+        if (guardStatusTitle) {
+          guardStatusTitle.textContent = currentLang === 'en' ? 'License Suspended (Temporarily Paused)' : 'สิทธิ์ถูกระงับชั่วคราว (License Suspended)';
+          guardStatusTitle.style.color = '#fbbf24';
+        }
+        if (guardStatusDesc) {
+          guardStatusDesc.textContent = currentLang === 'en'
+            ? 'Your license has been suspended temporarily by the administrator. Click Refresh Status below if reinstated.'
+            : 'สิทธิ์การใช้งานของคุณถูกสั่งระงับชั่วคราวโดยผู้ดูแลระบบ หากได้รับการปลดระงับแล้ว สามารถกดปุ่มตรวจสอบสถานะล่าสุดด้านล่างได้ทันที';
+        }
+        if (guardSuspendedKeyDisplay) guardSuspendedKeyDisplay.textContent = activeKey || '-';
+        if (window.updateLicenseCheckButtonState) window.updateLicenseCheckButtonState();
+      } else {
+        if (guardUnlicensedSection) guardUnlicensedSection.style.display = 'block';
+        if (guardSuspendedSection) guardSuspendedSection.style.display = 'none';
+        if (guardStatusIcon) guardStatusIcon.textContent = '🔒';
+        if (guardStatusTitle) {
+          guardStatusTitle.textContent = currentLang === 'en' ? 'License Verification Required' : 'จำเป็นต้องลงทะเบียน License';
+          guardStatusTitle.style.color = '#fff';
+        }
+        if (guardStatusDesc) {
+          guardStatusDesc.textContent = currentLang === 'en'
+            ? 'Welcome to NodeHotkey Studio Pro. Please enter your license key to unlock the application.'
+            : 'กรุณากรอก License Key เพื่อเปิดใช้งานระบบและปลดล็อค Action Node Studio';
+        }
+      }
+    }
+
+    // 2. Update Dashboard Alert Banner
+    const dashBanner = document.getElementById('dashboard-license-alert-banner');
+    const dashIcon = document.getElementById('dash-lic-alert-icon');
+    const dashTitle = document.getElementById('dash-lic-alert-title');
+    const dashDesc = document.getElementById('dash-lic-alert-desc');
+
+    if (dashBanner) {
+      if (isValid) {
+        dashBanner.style.display = 'none';
+      } else {
+        const isSuspended = status.toLowerCase() === 'suspended';
+        dashBanner.style.display = 'flex';
+        if (isSuspended) {
+          dashBanner.style.borderColor = 'rgba(245, 158, 11, 0.5)';
+          dashBanner.style.background = 'rgba(120, 53, 15, 0.35)';
+          if (dashIcon) dashIcon.textContent = '🟡';
+          if (dashTitle) {
+            dashTitle.textContent = currentLang === 'en' ? 'License Suspended (Temporarily Paused)' : 'สิทธิ์ถูกระงับชั่วคราว (License Suspended)';
+            dashTitle.style.color = '#fde68a';
+          }
+          if (dashDesc) {
+            dashDesc.textContent = currentLang === 'en'
+              ? 'Bot execution is temporarily paused by administrator. Please contact your administrator.'
+              : 'ฟังก์ชันบอทถูกสั่งพักการใช้งานชั่วคราวโดยผู้ดูแลระบบ กรุณาติดต่อผู้ดูแลระบบ';
+            dashDesc.style.color = '#fef3c7';
+          }
+        } else {
+          dashBanner.style.borderColor = 'rgba(239, 68, 68, 0.4)';
+          dashBanner.style.background = 'rgba(69, 10, 10, 0.35)';
+          if (dashIcon) dashIcon.textContent = '🔒';
+          if (dashTitle) {
+            dashTitle.textContent = currentLang === 'en' ? 'License Verification Required' : 'จำเป็นต้องลงทะเบียน License (License Required)';
+            dashTitle.style.color = '#fca5a5';
+          }
+          if (dashDesc) {
+            dashDesc.textContent = currentLang === 'en'
+              ? 'Bot execution and Studio are locked. Please register a valid license key in Settings.'
+              : 'ฟังก์ชันบอทและการสร้างโหนดถูกล็อค กรุณาลงทะเบียน License Key ที่ถูกต้องในแท็บ Settings';
+            dashDesc.style.color = '#fecaca';
+          }
+        }
+      }
+    }
+
+    // 3. Update Action Node Studio View if open
+    if (currentView === 'editor') {
+      const offlinePlaceholder = document.getElementById('editor-offline-placeholder');
+      if (!isValid) {
+        renderEditorLicenseLocked();
+        if (offlinePlaceholder) offlinePlaceholder.style.display = 'flex';
+        if (editorFrame && editorFrame.src && editorFrame.src !== 'about:blank') {
+          editorFrame.src = 'about:blank';
+        }
+      } else if (isServerOnline) {
+        if (offlinePlaceholder) offlinePlaceholder.style.display = 'none';
+      } else {
+        renderEditorOfflineNormal();
+        if (offlinePlaceholder) offlinePlaceholder.style.display = 'flex';
+      }
+    }
+
+    // 4. Update Sidebar Toggle Button if stopped
+    if (!isRunning && !isRestarting) {
+      if (!isValid) {
+        const isSuspended = status.toLowerCase() === 'suspended';
+        btnToggleEngine.className = isSuspended ? 'btn-toggle-engine-sidebar btn-suspended' : 'btn-toggle-engine-sidebar btn-locked';
+        heroIcon.textContent = '🔒';
+        heroTitle.textContent = isSuspended ? 'สิทธิ์ถูกระงับ' : 'ต้องมี License';
+        heroSub.textContent = isSuspended ? 'Suspended' : 'License Required';
+      } else {
+        btnToggleEngine.className = 'btn-toggle-engine-sidebar btn-start';
+        heroIcon.textContent = '▶';
+        const curT = i18nDict[currentLang] || i18nDict.th;
+        heroTitle.textContent = curT.btnStartEngine || 'Start Bot Engine';
+        heroSub.textContent = 'Start Bot Engine';
+      }
+    }
+  }
+  window.updateLicenseUI = updateLicenseUI;
+
+  window.loadLicenseStatus = async function() {
+    try {
+      const res = await fetch(getServerUrl('/api/security/license/status'));
+      if (res && res.ok) {
+        const data = await res.json();
+        if (data && data.success) {
+          window.updateLicenseUI(data);
+        }
+      }
+    } catch (e) {
+      console.warn('Failed to load license status:', e);
+    }
+  };
+
+  window.activateLicenseFromUI = async function() {
+    const input = document.getElementById('setting-license-input');
+    const btn = document.getElementById('btn-activate-license');
+    if (!input || !input.value.trim()) {
+      window.showToast('กรุณาวาง License Key ก่อนกด Activate', 'warning', 'ระบุ License Key');
+      return;
+    }
+
+    const key = input.value.trim();
+    if (btn) btn.textContent = '⏳ Checking...';
+
+    try {
+      const res = await fetch(getServerUrl('/api/security/license/activate'), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ licenseKey: key })
+      });
+      const data = await res.json();
+      if (data && data.success) {
+        try { localStorage.setItem('nhk_active_serial_v4', key); } catch (e) {}
+        window.showToast(`เปิดใช้งาน License สำเร็จ! ระดับ: ${data.tier || 'PRO'}`, 'success', 'สำเร็จ 🎉');
+        if (data.licenseStatus) {
+          if (!data.licenseStatus.activeKey) data.licenseStatus.activeKey = key;
+          window.updateLicenseUI(data.licenseStatus);
+        } else {
+          window.loadLicenseStatus();
+        }
+        input.value = '';
+      } else {
+        window.showToast(data.error || 'Invalid license key', 'error', 'ไม่สามารถเปิดใช้งานได้ ❌');
+      }
+    } catch (e) {
+      window.showToast(`เกิดข้อผิดพลาดในการเชื่อมต่อ: ${e.message}`, 'error', 'เชื่อมต่อล้มเหลว ❌');
+    } finally {
+      if (btn) btn.textContent = '✨ Activate';
+    }
+  };
+
+  // ☁️ Autonomous Online License Synchronization (Zero Manual Interaction)
+  window.autoSyncOnlineLicense = async function(showNotice = false) {
+    try {
+      const syncUrl = showNotice ? '/api/security/license/sync-online' : '/api/security/license/sync-online?silent=1';
+      const res = await fetch(getServerUrl(syncUrl), {
+        method: 'POST'
+      });
+      const data = await res.json();
+      if (data && data.success) {
+        if (showNotice) {
+          window.showToast(`ซิงค์สิทธิ์ License สำเร็จ!\nระดับ: ${data.tier || 'PRO'}`, 'success', 'สำเร็จ ✓');
+        }
+        if (data.licenseStatus) window.updateLicenseUI(data.licenseStatus);
+      } else {
+        if (data && data.licenseStatus) {
+          window.updateLicenseUI(data.licenseStatus);
+          const st = (data.licenseStatus.status || '').toLowerCase();
+          if (st === 'suspended') {
+            window.showToast('สิทธิ์การใช้งานถูกระงับชั่วคราวโดยผู้ดูแลระบบ (Suspended)', 'warning', 'สิทธิ์ถูกระงับ 🟡');
+          } else if (st === 'unlicensed' || !data.licenseStatus.is_valid) {
+            try { localStorage.removeItem('nhk_active_serial_v4'); } catch(e) {}
+            window.showToast('License ถูกยกเลิกหรือไม่มีในระบบแล้ว กรุณาลงทะเบียนใหม่', 'error', 'ไม่มี License 🔒');
+          }
+        }
+        if (showNotice) {
+          window.showToast(data.error || 'Server error', 'error', 'ตรวจสอบไม่สำเร็จ ❌');
+        }
+      }
+    } catch (e) {
+      if (showNotice) {
+        window.showToast(`เกิดข้อผิดพลาดในการเชื่อมต่อเซิร์ฟเวอร์: ${e.message}`, 'error', 'เชื่อมต่อล้มเหลว ❌');
+      }
+    }
+  };
+  window.syncLicenseWithCloudflare = window.autoSyncOnlineLicense;
+
+  // 🛡️ Anti-Spam & Rate-Limiting System (Hybrid: 5s Cooldown + 10 clicks/min => 10 min Lockout)
+  const RATE_LIMIT_CONFIG = {
+    COOLDOWN_MS: 5000,         // 5 วินาทีต่อการกด 1 ครั้ง
+    WINDOW_MS: 60000,          // 1 นาที (60 วินาที)
+    MAX_CLICKS: 10,            // สูงสุด 10 ครั้งต่อนาที
+    LOCKOUT_MS: 600000         // บล็อค 10 นาที (600 วินาที)
+  };
+
+  let licenseCheckTimerInterval = null;
+
+  function getLicenseCheckThrottle() {
+    const now = Date.now();
+    let lockoutUntil = 0;
+    let cooldownUntil = 0;
+    try {
+      lockoutUntil = parseInt(localStorage.getItem('nhk_license_lockout_until') || '0', 10);
+      cooldownUntil = parseInt(localStorage.getItem('nhk_license_cooldown_until') || '0', 10);
+    } catch (e) {}
+
+    if (lockoutUntil > now) {
+      return { isBlocked: true, type: 'lockout', remainingMs: lockoutUntil - now };
+    }
+    if (cooldownUntil > now) {
+      return { isBlocked: true, type: 'cooldown', remainingMs: cooldownUntil - now };
+    }
+    return { isBlocked: false, type: 'none', remainingMs: 0 };
+  }
+
+  function formatTimeRemaining(ms) {
+    const totalSecs = Math.max(0, Math.ceil(ms / 1000));
+    const mins = Math.floor(totalSecs / 60);
+    const secs = totalSecs % 60;
+    return `${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
+  }
+
+  window.updateLicenseCheckButtonState = function() {
+    const btn = document.getElementById('btn-check-license-status');
+    const icon = document.getElementById('icon-refresh-status');
+    const text = document.getElementById('text-refresh-status');
+
+    const guardBtn = document.getElementById('btn-guard-refresh-status');
+    const guardIcon = document.getElementById('icon-guard-refresh-status');
+    const guardText = document.getElementById('text-guard-refresh-status');
+
+    const throttle = getLicenseCheckThrottle();
+
+    const applyState = (b, i, t) => {
+      if (!b || !t) return;
+      if (throttle.isBlocked) {
+        b.disabled = true;
+        b.style.opacity = '0.75';
+        b.style.cursor = 'not-allowed';
+        if (i) i.style.animation = '';
+
+        if (throttle.type === 'lockout') {
+          const timeStr = formatTimeRemaining(throttle.remainingMs);
+          t.textContent = `🔒 ระงับการตรวจสอบ (เหลือ ${timeStr} นาที)`;
+          b.style.background = 'rgba(239, 68, 68, 0.2)';
+          b.style.borderColor = 'rgba(239, 68, 68, 0.45)';
+          b.style.color = '#fca5a5';
+          if (i) i.textContent = '🔒';
+        } else if (throttle.type === 'cooldown') {
+          const secs = Math.ceil(throttle.remainingMs / 1000);
+          t.textContent = `⏳ รอสักครู่ (${secs}s)...`;
+          b.style.background = 'rgba(245, 158, 11, 0.2)';
+          b.style.borderColor = 'rgba(245, 158, 11, 0.4)';
+          b.style.color = '#fde68a';
+          if (i) i.textContent = '⏳';
+        }
+      } else {
+        b.disabled = false;
+        b.style.opacity = '1';
+        b.style.cursor = 'pointer';
+        b.style.background = 'rgba(245, 158, 11, 0.15)';
+        b.style.borderColor = 'rgba(245, 158, 11, 0.35)';
+        b.style.color = '#fde68a';
+        if (i) {
+          i.style.animation = '';
+          i.textContent = '🔄';
+        }
+        t.textContent = 'ตรวจสอบสถานะล่าสุด (Refresh Status)';
+      }
+    };
+
+    applyState(btn, icon, text);
+    applyState(guardBtn, guardIcon, guardText);
+
+    if (throttle.isBlocked) {
+      if (!licenseCheckTimerInterval) {
+        licenseCheckTimerInterval = setInterval(() => {
+          const t = getLicenseCheckThrottle();
+          if (!t.isBlocked) {
+            clearInterval(licenseCheckTimerInterval);
+            licenseCheckTimerInterval = null;
+            window.updateLicenseCheckButtonState();
+          } else {
+            window.updateLicenseCheckButtonState();
+          }
+        }, 1000);
+      }
+    } else {
+      if (licenseCheckTimerInterval) {
+        clearInterval(licenseCheckTimerInterval);
+        licenseCheckTimerInterval = null;
+      }
+    }
+  };
+
+  // 🔄 ฟังก์ชันปุ่ม "ตรวจสอบสถานะล่าสุด (Refresh Status)" พร้อมระบบป้องกัน Anti-Spam
+  window.checkLicenseStatusFromUI = async function() {
+    const throttle = getLicenseCheckThrottle();
+    if (throttle.isBlocked) {
+      if (throttle.type === 'lockout') {
+        window.showToast(`ระบบกำลังระงับการตรวจสอบชั่วคราว เหลือเวลาอีก ${formatTimeRemaining(throttle.remainingMs)} นาที`, 'error', '🔒 ระงับชั่วคราว');
+      } else {
+        window.showToast(`กรุณารอสักครู่ (${Math.ceil(throttle.remainingMs / 1000)} วินาที) ก่อนกดตรวจสอบใหม่`, 'warning', '⏳ Cooldown');
+      }
+      window.updateLicenseCheckButtonState();
+      return;
+    }
+
+    const now = Date.now();
+    let clicks = [];
+    try {
+      clicks = JSON.parse(localStorage.getItem('nhk_license_clicks') || '[]');
+      if (!Array.isArray(clicks)) clicks = [];
+    } catch (e) { clicks = []; }
+
+    // Sliding window: filter clicks within last 60s
+    clicks = clicks.filter(t => (now - t) < RATE_LIMIT_CONFIG.WINDOW_MS);
+    clicks.push(now);
+
+    if (clicks.length >= RATE_LIMIT_CONFIG.MAX_CLICKS) {
+      // 10 clicks reached within 1 minute! Trigger 10-minute lockout
+      const lockoutUntil = now + RATE_LIMIT_CONFIG.LOCKOUT_MS;
+      try {
+        localStorage.setItem('nhk_license_lockout_until', lockoutUntil.toString());
+        localStorage.setItem('nhk_license_clicks', JSON.stringify([]));
+      } catch (e) {}
+
+      window.showToast('คุณกดตรวจสอบสถานะถี่เกินไป (10 ครั้งใน 1 นาที) ระบบระงับการตรวจสอบชั่วคราว 10 นาที 🔒', 'warning', 'ระงับชั่วคราว 10 นาที ⚠️');
+      window.updateLicenseCheckButtonState();
+      return;
+    }
+
+    // Record click & start 5s cooldown
+    try {
+      localStorage.setItem('nhk_license_clicks', JSON.stringify(clicks));
+      localStorage.setItem('nhk_license_cooldown_until', (now + RATE_LIMIT_CONFIG.COOLDOWN_MS).toString());
+    } catch (e) {}
+
+    const btn = document.getElementById('btn-check-license-status');
+    const icon = document.getElementById('icon-refresh-status');
+    const text = document.getElementById('text-refresh-status');
+    const guardBtn = document.getElementById('btn-guard-refresh-status');
+    const guardIcon = document.getElementById('icon-guard-refresh-status');
+    const guardText = document.getElementById('text-guard-refresh-status');
+
+    if (btn) { btn.disabled = true; btn.style.opacity = '0.75'; btn.style.cursor = 'wait'; }
+    if (guardBtn) { guardBtn.disabled = true; guardBtn.style.opacity = '0.75'; guardBtn.style.cursor = 'wait'; }
+    if (icon) { icon.textContent = '🔄'; icon.style.animation = 'spin 1s linear infinite'; }
+    if (guardIcon) { guardIcon.textContent = '🔄'; guardIcon.style.animation = 'spin 1s linear infinite'; }
+    if (text) text.textContent = 'กำลังตรวจสอบสถานะกับ Cloud...';
+    if (guardText) guardText.textContent = 'กำลังตรวจสอบสถานะกับ Cloud...';
+
+    try {
+      const res = await fetch(getServerUrl('/api/security/license/sync-online'), {
+        method: 'POST'
+      });
+      const data = await res.json().catch(() => ({}));
+
+      if (res.status === 429) {
+        // Backend Rate-Limiter triggered
+        const waitSecs = data.retryAfterSecs || 600;
+        const lockoutUntil = Date.now() + (waitSecs * 1000);
+        try {
+          localStorage.setItem('nhk_license_lockout_until', lockoutUntil.toString());
+        } catch (e) {}
+        window.showToast(data.error || 'คำขอตรวจสอบถี่เกินไป ระบบระงับการตรวจสอบชั่วคราว', 'error', '🔒 Too Many Requests');
+        window.updateLicenseCheckButtonState();
+        return;
+      }
+
+      if (res.ok && data.success) {
+        window.showToast('ผู้ดูแลระบบปลดระงับสิทธิ์แล้ว! สิทธิ์การใช้งานพร้อมทำงานตามปกติ 🟢', 'success', 'ปลดระงับสำเร็จ 🎉');
+        // Clear click history & lockout on successful re-activation!
+        try {
+          localStorage.removeItem('nhk_license_lockout_until');
+          localStorage.removeItem('nhk_license_cooldown_until');
+          localStorage.removeItem('nhk_license_clicks');
+        } catch (e) {}
+        if (data.licenseStatus) {
+          window.updateLicenseUI(data.licenseStatus);
+        } else {
+          window.loadLicenseStatus();
+        }
+      } else {
+        const licStatus = data.licenseStatus || {};
+        const st = (licStatus.status || data.status || '').toLowerCase();
+        if (st === 'suspended') {
+          window.showToast('สิทธิ์ยังคงถูกระงับชั่วคราวโดยผู้ดูแลระบบ (Suspended)', 'warning', 'ยังคงถูกระงับ 🟡');
+          if (data.licenseStatus) window.updateLicenseUI(data.licenseStatus);
+        } else {
+          // 3. Key ถูกลบออกจากระบบ: ล้างคีย์ในเครื่องออกทั้งหมด และสลับกลับไปสถานะรอกรอก input
+          try { localStorage.removeItem('nhk_active_serial_v4'); } catch (e) {}
+          window.showToast('Key นี้ถูกลบหรือถอนสิทธิ์ออกจากระบบแล้ว กรุณากรอก Key ใหม่ 🔒', 'error', 'สิทธิ์ถูกยกเลิก ❌');
+          if (data.licenseStatus) {
+            window.updateLicenseUI(data.licenseStatus);
+          } else {
+            window.updateLicenseUI({ is_valid: false, status: 'Unlicensed', active_key: null });
+          }
+        }
+      }
+    } catch (e) {
+      window.showToast(`เกิดข้อผิดพลาดในการเชื่อมต่อ: ${e.message}`, 'error', 'เชื่อมต่อล้มเหลว ❌');
+    } finally {
+      window.updateLicenseCheckButtonState();
+    }
+  };
+
+  // ⚡ Strict Gatekeeper First: Immediate License verification on startup (0ms delay)
+  (async () => {
+    // 1. Immediate local license check (returns in <2ms from native cache)
+    const licPromise = window.loadLicenseStatus();
+
+    // 2. Fetch HWID in parallel for display in guard/settings
+    const hwidPromise = (async () => {
+      try {
+        const hwidRes = await fetch(getServerUrl('/api/security/hwid'));
+        if (hwidRes && hwidRes.ok) {
+          const hwidData = await hwidRes.json();
+          if (hwidData && hwidData.hwid) {
+            window.currentHWIDString = hwidData.hwid;
+            const gHwid = document.getElementById('guard-hwid-text');
+            if (gHwid) gHwid.textContent = hwidData.hwid;
+          }
+        }
+      } catch (e) {}
+    })();
+
+    await Promise.all([licPromise, hwidPromise]);
+    if (window.updateLicenseCheckButtonState) window.updateLicenseCheckButtonState();
+    // Silent background auto-validation against Cloudflare
+    window.autoSyncOnlineLicense(false);
+  })();
+
+  // Note: License status updates are delivered in real-time from backend SSE (Zero Polling Loop)
+
+  // Silent Background Update Check on Startup (Delayed 2.5s to prevent boot race)
+  setTimeout(() => {
+    checkUpdateSilentlyOnStartup();
+  }, 2500);
+
+  // Prevent Mouse Button 4 & 5 (Back/Forward) from reloading/navigating the Launcher Shell
+  window.addEventListener('mouseup', (e) => {
+    if (e.button === 3 || e.button === 4) {
+      e.preventDefault();
+      e.stopPropagation();
+    }
+  }, true);
+
+  window.addEventListener('mousedown', (e) => {
+    if (e.button === 3 || e.button === 4) {
+      e.preventDefault();
+      e.stopPropagation();
+    }
+  }, true);
+
+  window.addEventListener('auxclick', (e) => {
+    if (e.button === 3 || e.button === 4) {
+      e.preventDefault();
+      e.stopPropagation();
+    }
+  }, true);
+
+  // Close modals on Escape key
+  window.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') {
+      const delModal = document.getElementById('delete-slot-confirm-modal');
+      if (delModal && delModal.style.display !== 'none') {
+        window.closeDeleteSlotModal();
+      }
+    }
+  });
+
+  // Focused Window Hotkey Fallback: Dispatches hotkey to /api/trigger/{key} when Launcher window is focused
+  function mapJsKeyToLauncherHotkey(e) {
+    const code = e.code || '';
+    const key = e.key || '';
+
+    if (/^F\d+$/.test(key)) return key.toUpperCase();
+
+    if (code.startsWith('Numpad')) {
+      if (code.length === 7) return 'NUMPAD ' + code.charAt(6);
+      if (code === 'NumpadDivide') return 'NUMPAD DIVIDE';
+      if (code === 'NumpadMultiply') return 'NUMPAD MULTIPLY';
+      if (code === 'NumpadSubtract') return 'NUMPAD MINUS';
+      if (code === 'NumpadAdd') return 'NUMPAD PLUS';
+      if (code === 'NumpadDecimal') return 'NUMPAD DOT';
+      if (code === 'NumpadEnter') return 'NUMPAD ENTER';
+    }
+
+    if (code.startsWith('Key')) return code.replace('Key', '').toUpperCase();
+    if (code.startsWith('Digit')) return code.replace('Digit', '').toUpperCase();
+
+    const specialMap = {
+      ' ': 'SPACE',
+      'Spacebar': 'SPACE',
+      'Escape': 'ESCAPE',
+      'Esc': 'ESCAPE',
+      'Insert': 'INSERT',
+      'Delete': 'DELETE',
+      'Home': 'HOME',
+      'End': 'END',
+      'PageUp': 'PAGE UP',
+      'PageDown': 'PAGE DOWN',
+      'Enter': 'ENTER'
+    };
+    return specialMap[key] || key.toUpperCase();
+  }
+
+  window.addEventListener('keydown', (e) => {
+    if (typeof isRecordingKey !== 'undefined' && isRecordingKey) return;
+    const activeEl = document.activeElement;
+    const isInputActive = activeEl && (activeEl.tagName === 'INPUT' || activeEl.tagName === 'TEXTAREA' || activeEl.isContentEditable);
+    if (isInputActive) return;
+
+    const isMac = navigator.platform.toUpperCase().indexOf('MAC') >= 0;
+    const isCmdOrCtrl = isMac ? e.metaKey : e.ctrlKey;
+    if (isCmdOrCtrl || e.altKey) return;
+    if (['F5', 'F12', 'Tab', 'Escape'].includes(e.key)) return;
+
+    const mappedKey = mapJsKeyToLauncherHotkey(e);
+    if (!mappedKey || ['SHIFT', 'CTRL', 'ALT', 'META'].includes(mappedKey)) return;
+
+    fetch(getServerUrl('/api/trigger/' + encodeURIComponent(mappedKey)), { method: 'POST' }).catch(() => {});
+  }, false);
+})();

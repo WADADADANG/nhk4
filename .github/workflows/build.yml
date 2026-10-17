@@ -1,0 +1,138 @@
+name: Multi-OS Production Build (Windows, Linux, macOS)
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+      - master
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build ${{ matrix.platform_name }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            platform_name: Windows x64
+            target: x86_64-pc-windows-msvc
+            binary_name: nodehotkey-rust.exe
+            archive_name: nodehotkey-windows-x64.zip
+            is_windows: true
+
+          - os: ubuntu-22.04
+            platform_name: Linux x64
+            target: x86_64-unknown-linux-gnu
+            binary_name: nodehotkey-rust
+            archive_name: nodehotkey-linux-x64.tar.gz
+            is_linux: true
+
+          - os: macos-latest
+            platform_name: macOS Apple Silicon (M-series)
+            target: aarch64-apple-darwin
+            binary_name: nodehotkey-rust
+            archive_name: nodehotkey-macos-arm64.tar.gz
+            is_macos: true
+
+          - os: macos-13
+            platform_name: macOS Intel x64
+            target: x86_64-apple-darwin
+            binary_name: nodehotkey-rust
+            archive_name: nodehotkey-macos-x64.tar.gz
+            is_macos: true
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Setup Rust Toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Rust Cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.target }}
+
+      - name: Install Linux System Dependencies
+        if: matrix.is_linux
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libasound2-dev \
+            libudev-dev \
+            pkg-config \
+            libx11-dev \
+            libxtst-dev \
+            libxi-dev \
+            libwebkit2gtk-4.1-dev \
+            libgtk-3-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev
+
+      - name: Compile Release Binary
+        run: cargo build --release --target ${{ matrix.target }}
+
+      - name: Package Distribution (Windows)
+        if: matrix.is_windows
+        shell: pwsh
+        run: |
+          $dist = "dist\NodeHotKey"
+          New-Item -ItemType Directory -Force -Path $dist
+          Copy-Item "target\${{ matrix.target }}\release\${{ matrix.binary_name }}" -Destination $dist
+          Copy-Item -Recurse "configs" -Destination "$dist\configs"
+          Copy-Item -Recurse "launcher" -Destination "$dist\launcher"
+          Copy-Item -Recurse "public" -Destination "$dist\public"
+          Copy-Item "start.bat" -Destination $dist
+          Copy-Item "README.md" -Destination $dist
+          Compress-Archive -Path "$dist\*" -DestinationPath "${{ matrix.archive_name }}" -Force
+
+      - name: Package Distribution (Linux / macOS)
+        if: "!matrix.is_windows"
+        run: |
+          mkdir -p dist/NodeHotKey
+          cp "target/${{ matrix.target }}/release/${{ matrix.binary_name }}" dist/NodeHotKey/
+          chmod +x "dist/NodeHotKey/${{ matrix.binary_name }}"
+          cp -r configs dist/NodeHotKey/
+          cp -r launcher dist/NodeHotKey/
+          cp -r public dist/NodeHotKey/
+          cp README.md dist/NodeHotKey/
+          tar -czvf "${{ matrix.archive_name }}" -C dist/NodeHotKey .
+
+      - name: Upload Build Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.archive_name }}
+          path: ${{ matrix.archive_name }}
+          retention-days: 30
+
+  release:
+    name: Publish GitHub Release
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Download All Artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: release-assets
+          merge-multiple: true
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: release-assets/*
+          draft: false
+          prerelease: false
+          generate_release_notes: true

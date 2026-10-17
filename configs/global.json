@@ -1,0 +1,114 @@
+{
+  "activeProfile": "Default",
+  "activeProfiles": [
+    "Default"
+  ],
+  "disabledClients": [],
+  "globalSettings": {
+    "targetUrlKeyword": "universe.flyff.com/play",
+    "enableOverlay": true,
+    "suspendHotkey": "END",
+    "ghostMouseJitter": {
+      "enabled": false,
+      "intervalMin": 8000,
+      "intervalMax": 25000,
+      "maxOffset": 12
+    },
+    "clientSlots": [
+      1,
+      2
+    ],
+    "clientAliases": {
+      "3": "3",
+      "2": "2",
+      "1": "1",
+      "6": "6",
+      "7": "7",
+      "5": "5",
+      "8": "8",
+      "4": "4"
+    },
+    "clientUserAgents": {
+      "4": "",
+      "3": "",
+      "6": "",
+      "8": "",
+      "7": "",
+      "2": "",
+      "1": "",
+      "5": ""
+    },
+    "clientProxies": {
+      "8": "",
+      "4": "",
+      "2": "",
+      "5": "",
+      "1": "",
+      "6": "",
+      "7": "",
+      "3": ""
+    },
+    "clientBrowsers": {
+      "4": "1-app",
+      "5": "1-app",
+      "1": "1-app",
+      "2": "1-app",
+      "3": "1-app",
+      "7": "1-app",
+      "6": "1-app",
+      "8": "1-app"
+    },
+    "clientWindowBounds": {
+      "3": {
+        "h": 532,
+        "w": 974,
+        "x": -974,
+        "y": 665
+      },
+      "4": {
+        "h": 532,
+        "w": 974,
+        "x": -974,
+        "y": 147
+      },
+      "5": {
+        "h": 712,
+        "w": 888,
+        "x": -7,
+        "y": 705
+      },
+      "7": {
+        "h": 1067,
+        "w": 1448,
+        "x": 647,
+        "y": 80
+      },
+      "1": {
+        "h": 859,
+        "w": 974,
+        "x": -1482,
+        "y": 162
+      },
+      "6": {
+        "h": 714,
+        "w": 883,
+        "x": -7,
+        "y": 0
+      },
+      "2": {
+        "h": 532,
+        "w": 974,
+        "x": -1920,
+        "y": 665
+      }
+    },
+    "gpuAcceleration": true,
+    "enablePipOverlay": false,
+    "webPort": 3088
+  },
+  "creatorIdentity": {
+    "authorId": "usr_06501ea0a0fc",
+    "authorSecret": "sec_9cda20c7c04f56c7e7c9f796230d01df",
+    "authorName": "WADADADANG"
+  }
+}
