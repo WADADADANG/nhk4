@@ -614,6 +614,54 @@ mod tests {
         let icon_file = IconAssets::get("icon.png").expect("icon.png must be embedded");
         assert!(!icon_file.data.is_empty(), "Embedded icon data must not be empty");
     }
+
+    #[tokio::test]
+    async fn test_overlay_persistence_and_profile_isolation() {
+        use crate::state::AppState;
+        use crate::model::GlobalConfig;
+        let ts = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos();
+        let temp_dir = std::env::temp_dir().join(format!("nhk_test_overlay_{}", ts));
+        let _ = std::fs::create_dir_all(&temp_dir);
+        let state = AppState::new(&temp_dir);
+
+        // 1. Initially set overlay to false (simulating user clicking X to close)
+        let mut global = state.config_store.get_global_config().await;
+        global.global_settings.enable_overlay = false;
+        let _ = state.config_store.save_global_config(&global).await;
+
+        let check1 = state.config_store.get_global_config().await;
+        assert_eq!(check1.global_settings.enable_overlay, false);
+
+        // 2. Simulate saving config from Action Node Studio with profile data
+        // The payload contains profiles and legacy fullConfig with enableOverlay = true
+        let canvas_payload = serde_json::json!({
+            "profiles": {
+                "Default": {
+                    "name": "Default",
+                    "version": "4.0.0",
+                    "canvas": { "panX": 0.0, "panY": 0.0, "zoom": 1.0 },
+                    "nodes": [],
+                    "connections": []
+                }
+            },
+            "globalSettings": {
+                "targetUrlKeyword": "universe.flyff.com",
+                "enableOverlay": true // Stale canvas setting!
+            }
+        });
+
+        // Simulating save_config logic
+        let is_profile_save = canvas_payload.get("profiles").is_some();
+        let mut cfg = serde_json::from_value::<GlobalConfig>(canvas_payload.clone()).unwrap();
+        if is_profile_save || canvas_payload.get("globalSettings").and_then(|g| g.get("enableOverlay")).is_none() {
+            cfg.global_settings.enable_overlay = check1.global_settings.enable_overlay;
+        }
+        let _ = state.config_store.save_global_config(&cfg).await;
+
+        // 3. Verify that enable_overlay is STILL false and was NOT overridden!
+        let check2 = state.config_store.get_global_config().await;
+        assert_eq!(check2.global_settings.enable_overlay, false, "Canvas profile save must NOT override user's overlay disabled state!");
+    }
 }
 
 

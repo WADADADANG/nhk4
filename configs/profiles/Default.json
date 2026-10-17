@@ -1,98 +1,90 @@
 {
-  "version": "4.0.0",
+  "version": "3.1.0",
   "name": "Default",
   "canvas": {
     "zoom": 1.0,
     "pan": {
-      "x": 470.0,
-      "y": 144.0
+      "x": -109.0,
+      "y": 459.0
     }
   },
   "nodes": [
     {
-      "id": "node_1792015267086",
+      "id": "node_1792263390309",
       "type": "trigger",
       "title": "Global Trigger",
       "position": {
         "x": 370.0,
-        "y": 120.0
+        "y": 140.0
       },
       "data": {
-        "actionId": "1792015267086",
+        "actionId": "1792263390309",
         "enabled": true,
         "triggerType": "keyboard",
         "triggerValue": "1"
       }
     },
     {
-      "id": "node_1792082280074",
+      "id": "node_1792263500977",
+      "type": "delay",
+      "title": "Delay Timer",
+      "position": {
+        "x": 1080.0,
+        "y": 170.0
+      },
+      "data": {
+        "actionId": "1792263500977",
+        "delayMs": 5000,
+        "enabled": true
+      }
+    },
+    {
+      "id": "node_1792263512976",
       "type": "step_log",
       "title": "Log Message",
       "position": {
-        "x": 710.0,
-        "y": 290.0
+        "x": 770.0,
+        "y": 20.0
       },
       "data": {
-        "actionId": "1792082280074",
+        "actionId": "1792263512976",
         "enabled": true,
-        "message": "Test"
+        "message": "1"
       }
     },
     {
-      "id": "node_1792101444073",
-      "type": "format_text",
-      "title": "Format Text",
+      "id": "node_1792263535058",
+      "type": "step_log",
+      "title": "Log Message",
       "position": {
-        "x": 690.0,
-        "y": 640.0
+        "x": 1420.0,
+        "y": 170.0
       },
       "data": {
-        "actionId": "1792101444073",
-        "boolFormat": "true_false",
+        "actionId": "1792263535058",
         "enabled": true,
-        "pins": [
-          "val_a"
-        ],
-        "separator": " ",
-        "template": "1 {val_a}"
-      }
-    },
-    {
-      "id": "node_1792101936730_3018",
-      "type": "format_text",
-      "title": "Format Text",
-      "position": {
-        "x": 380.0,
-        "y": 230.0
-      },
-      "data": {
-        "actionId": "1792101936730_3018",
-        "boolFormat": "true_false",
-        "enabled": true,
-        "pins": [],
-        "separator": " ",
-        "template": "2"
+        "message": "2"
       }
     }
   ],
   "connections": [
     {
-      "fromNodeId": "node_1792015267086",
+      "fromNodeId": "node_1792263390309",
       "fromPort": "exec_out",
-      "toNodeId": "node_1792082280074",
+      "toNodeId": "node_1792263512976",
       "toPort": "exec_in"
     },
     {
-      "fromNodeId": "node_1792101444073",
-      "fromPort": "msg_out",
-      "toNodeId": "node_1792082280074",
-      "toPort": "msg_in"
+      "fromNodeId": "node_1792263512976",
+      "fromPort": "next",
+      "toNodeId": "node_1792263500977",
+      "toPort": "exec_in"
     },
     {
-      "fromNodeId": "node_1792101936730_3018",
-      "fromPort": "msg_out",
-      "toNodeId": "node_1792101444073",
-      "toPort": "val_a"
+      "fromNodeId": "node_1792263500977",
+      "fromPort": "next",
+      "toNodeId": "node_1792263535058",
+      "toPort": "exec_in"
     }
   ],
   "variables": []

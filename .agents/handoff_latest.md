@@ -432,6 +432,12 @@
         - อัปเดต [`start.bat`](file:///c:/Users/WADADADANG/Desktop/MyProjects/NodeHotKeyV4/start.bat) และ [`build.bat`](file:///c:/Users/WADADADANG/Desktop/MyProjects/NodeHotKeyV4/build.bat) ให้ชี้และจัดการ Process `nhk4.exe`
         - อัปเดต Header และ Brand บน UI ([`launcher/ui/index.html`](file:///c:/Users/WADADADANG/Desktop/MyProjects/NodeHotKeyV4/launcher/ui/index.html) & [`public/index.html`](file:///c:/Users/WADADADANG/Desktop/MyProjects/NodeHotKeyV4/public/index.html)) เป็น **`NHK4`**
         - รัน `cargo check`, `cargo build`, และ `cargo test` ผ่านสมบูรณ์ 100% (**43/43 tests passed**)
+      - **เฟส 46 แก้ไขปัญหา Overlay State Persistence & Profile Canvas Isolation:**
+        - แก้ไขปุ่ม `[✕]` ปิด Overlay และ endpoint `/api/window/overlay/hide`: ให้บันทึก `enable_overlay = false` ลง `configs/global.json` จริงในระดับระบบกลาง พร้อมบรอดแคสต์ SSE อัปเดตสถานะให้ Launcher Dashboard รับทราบทันที
+        - แก้ไขฟังก์ชัน `save_config` ใน [`src/server/routes.rs`](file:///c:/Users/WADADADANG/Desktop/MyProjects/NodeHotKeyV4/src/server/routes.rs): เมื่อเซฟ Profile จาก Action Node Studio Canvas จะไม่ยอมให้ค่าเก่าของ Canvas มาเขียนทับ `enable_overlay` ของระบบกลาง และตัดคำสั่งบังคับเปิด Overlay (`OverlayShow`) ออกจากจังหวะเซฟ Profile อย่างเด็ดขาด ป้องกันไม่ให้หน้าต่าง Overlay โผล่กลับขึ้นมาเอง
+        - ปรับปรุง [`public/index.html`](file:///c:/Users/WADADADANG/Desktop/MyProjects/NodeHotKeyV4/public/index.html) ปลดแอตทริบิวต์ `checked` ที่ค้างอยู่ใน input ซ่อน
+        - เพิ่ม Unit Test `test_overlay_persistence_and_profile_isolation` ใน [`src/lib.rs`](file:///c:/Users/WADADADANG/Desktop/MyProjects/NodeHotKeyV4/src/lib.rs)
+        - รัน `cargo check` และ `cargo test` ผ่านสมบูรณ์ 100% (**44/44 tests passed**)
 - **สร้างและปรับปรุงเครื่องมือ .bat (Pure English ASCII / Zero Emoji):**
   - [deploy_admin.bat](file:///c:/Users/WADADADANG/Desktop/MyProjects/NodeHotKeyV4/deploy_admin.bat): ดับเบิลคลิก Deploy เว็บแอดมินขึ้น Vercel ในคลิกเดียว
   - [test.bat](file:///c:/Users/WADADADANG/Desktop/MyProjects/NodeHotKeyV4/test.bat): ดับเบิลคลิกรัน Unit Tests ในคลิกเดียว

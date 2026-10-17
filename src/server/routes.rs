@@ -319,9 +319,21 @@ pub async fn save_config(
     Json(payload): Json<serde_json::Value>,
 ) -> impl IntoResponse {
     let existing_global = state.config_store.get_global_config().await;
+    let is_profile_save = payload.get("profiles").is_some();
     if let Ok(mut cfg) = serde_json::from_value::<GlobalConfig>(payload.clone()) {
-        if payload.get("globalSettings").and_then(|g| g.get("enableOverlay")).is_none() {
+        // If save request has "profiles", it is coming from Action Node Studio canvas.
+        // Always preserve existing enable_overlay so canvas never inadvertently overrides the global overlay status.
+        if is_profile_save || payload.get("globalSettings").and_then(|g| g.get("enableOverlay")).is_none() {
             cfg.global_settings.enable_overlay = existing_global.global_settings.enable_overlay;
+        } else if cfg.global_settings.enable_overlay != existing_global.global_settings.enable_overlay {
+            // Save from settings UI: if changed, sync overlay window
+            if cfg.global_settings.enable_overlay {
+                if state.is_running.load(std::sync::atomic::Ordering::SeqCst) {
+                    let _ = state.window_action_sender.send(crate::state::WindowAction::OverlayShow);
+                }
+            } else {
+                let _ = state.window_action_sender.send(crate::state::WindowAction::OverlayHide);
+            }
         }
         let _ = state.config_store.save_global_config(&cfg).await;
         // Pre-register any newly added client slots dynamically
@@ -389,10 +401,6 @@ pub async fn save_config(
     }
 
     state.log("info", "Configuration saved successfully.");
-    let global_after = state.config_store.get_global_config().await;
-    if state.is_running.load(std::sync::atomic::Ordering::SeqCst) && global_after.global_settings.enable_overlay {
-        let _ = state.window_action_sender.send(crate::state::WindowAction::OverlayShow);
-    }
     state.notify_status_change().await;
     Json(json!({ "success": true }))
 }
@@ -1197,6 +1205,8 @@ pub async fn disable_overlay(State(state): State<AppState>) -> impl IntoResponse
     let mut global = state.config_store.get_global_config().await;
     global.global_settings.enable_overlay = false;
     let _ = state.config_store.save_global_config(&global).await;
+    let _ = state.window_action_sender.send(crate::state::WindowAction::OverlayHide);
+    state.notify_status_change().await;
     Json(json!({ "success": true }))
 }
 
@@ -1636,18 +1646,35 @@ pub async fn window_close(State(state): State<AppState>) -> impl IntoResponse {
 
 // Overlay window handlers
 pub async fn overlay_show(State(state): State<AppState>) -> impl IntoResponse {
+    let mut global = state.config_store.get_global_config().await;
+    global.global_settings.enable_overlay = true;
+    let _ = state.config_store.save_global_config(&global).await;
     let _ = state.window_action_sender.send(crate::state::WindowAction::OverlayShow);
+    state.notify_status_change().await;
     Json(json!({ "success": true }))
 }
 
 pub async fn overlay_hide(State(state): State<AppState>) -> impl IntoResponse {
+    let mut global = state.config_store.get_global_config().await;
+    global.global_settings.enable_overlay = false;
+    let _ = state.config_store.save_global_config(&global).await;
     let _ = state.window_action_sender.send(crate::state::WindowAction::OverlayHide);
+    state.notify_status_change().await;
     Json(json!({ "success": true }))
 }
 
 pub async fn overlay_toggle(State(state): State<AppState>) -> impl IntoResponse {
-    let _ = state.window_action_sender.send(crate::state::WindowAction::OverlayToggle);
-    Json(json!({ "success": true }))
+    let mut global = state.config_store.get_global_config().await;
+    global.global_settings.enable_overlay = !global.global_settings.enable_overlay;
+    let new_state = global.global_settings.enable_overlay;
+    let _ = state.config_store.save_global_config(&global).await;
+    if new_state {
+        let _ = state.window_action_sender.send(crate::state::WindowAction::OverlayShow);
+    } else {
+        let _ = state.window_action_sender.send(crate::state::WindowAction::OverlayHide);
+    }
+    state.notify_status_change().await;
+    Json(json!({ "success": true, "enableOverlay": new_state }))
 }
 
 #[derive(Deserialize)]
