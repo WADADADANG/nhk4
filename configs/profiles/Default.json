@@ -4,8 +4,8 @@
   "canvas": {
     "zoom": 1.0,
     "pan": {
-      "x": -109.0,
-      "y": 459.0
+      "x": 194.0,
+      "y": 231.0
     }
   },
   "nodes": [
@@ -25,45 +25,60 @@
       }
     },
     {
-      "id": "node_1792263500977",
-      "type": "delay",
-      "title": "Delay Timer",
+      "id": "node_1792264499387",
+      "type": "emit_event",
+      "title": "Emit Event",
       "position": {
-        "x": 1080.0,
-        "y": 170.0
+        "x": 760.0,
+        "y": 140.0
       },
       "data": {
-        "actionId": "1792263500977",
-        "delayMs": 5000,
-        "enabled": true
+        "actionId": "1792264499387",
+        "enabled": true,
+        "eventName": "OnEmitEvent"
       }
     },
     {
-      "id": "node_1792263512976",
-      "type": "step_log",
-      "title": "Log Message",
+      "id": "node_1792264524196",
+      "type": "trigger",
+      "title": "Global Trigger",
       "position": {
-        "x": 770.0,
-        "y": 20.0
+        "x": 340.0,
+        "y": 370.0
       },
       "data": {
-        "actionId": "1792263512976",
+        "actionId": "1792264524196",
         "enabled": true,
-        "message": "1"
+        "triggerType": "event",
+        "triggerValue": "OnEmitEvent"
       }
     },
     {
-      "id": "node_1792263535058",
+      "id": "node_1792264532267",
       "type": "step_log",
       "title": "Log Message",
       "position": {
-        "x": 1420.0,
-        "y": 170.0
+        "x": 670.0,
+        "y": 338.0
       },
       "data": {
-        "actionId": "1792263535058",
+        "actionId": "1792264532267",
         "enabled": true,
-        "message": "2"
+        "message": "รับเหตุการแล้ว"
+      }
+    },
+    {
+      "id": "node_1792264561194",
+      "type": "step_log",
+      "title": "Log Message",
+      "position": {
+        "x": 1090.0,
+        "y": 140.0
+      },
+      "data": {
+        "actionId": "1792264561194",
+        "enabled": true,
+        "message": "ส่งเหตุการ OnEmitEvent แล้ว"
       }
     }
   ],
@@ -71,19 +86,19 @@
     {
       "fromNodeId": "node_1792263390309",
       "fromPort": "exec_out",
-      "toNodeId": "node_1792263512976",
+      "toNodeId": "node_1792264499387",
       "toPort": "exec_in"
     },
     {
-      "fromNodeId": "node_1792263512976",
-      "fromPort": "next",
-      "toNodeId": "node_1792263500977",
+      "fromNodeId": "node_1792264524196",
+      "fromPort": "exec_out",
+      "toNodeId": "node_1792264532267",
       "toPort": "exec_in"
     },
     {
-      "fromNodeId": "node_1792263500977",
+      "fromNodeId": "node_1792264499387",
       "fromPort": "next",
-      "toNodeId": "node_1792263535058",
+      "toNodeId": "node_1792264561194",
       "toPort": "exec_in"
     }
   ],

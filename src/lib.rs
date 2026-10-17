@@ -662,6 +662,130 @@ mod tests {
         let check2 = state.config_store.get_global_config().await;
         assert_eq!(check2.global_settings.enable_overlay, false, "Canvas profile save must NOT override user's overlay disabled state!");
     }
+
+    #[tokio::test]
+    async fn test_emit_event_triggers_event_listener_flow() {
+        use crate::state::AppState;
+        use crate::model::{Profile, WorkflowNode, Connection};
+        use crate::engine::ActionExecutor;
+        use std::path::PathBuf;
+
+        let state = AppState::new(&PathBuf::from("."));
+        state.is_running.store(true, std::sync::atomic::Ordering::SeqCst);
+
+        // 1. Hotkey trigger [1]
+        let trig_hotkey = WorkflowNode::new(
+            "trig_hk",
+            "trigger",
+            Some("Global Trigger 1".to_string()),
+            0.0, 0.0,
+            serde_json::json!({
+                "enabled": true,
+                "triggerType": "keyboard",
+                "triggerValue": "1"
+            }),
+        );
+
+        // 2. Emit Event node
+        let emit_node = WorkflowNode::new(
+            "emit_1",
+            "emit_event",
+            Some("Emit Event".to_string()),
+            0.0, 0.0,
+            serde_json::json!({
+                "enabled": true,
+                "eventName": "OnEmitEvent"
+            }),
+        );
+
+        // 3. Downstream log from emit node
+        let log_node = WorkflowNode::new(
+            "log_emit",
+            "step_log",
+            Some("Log After Emit".to_string()),
+            0.0, 0.0,
+            serde_json::json!({
+                "enabled": true,
+                "message": "ส่งเหตุการ OnEmitEvent แล้ว"
+            }),
+        );
+
+        // 4. Custom Event listener trigger listening for "OnEmitEvent"
+        let trig_event = WorkflowNode::new(
+            "trig_evt",
+            "trigger",
+            Some("Event Trigger".to_string()),
+            0.0, 0.0,
+            serde_json::json!({
+                "enabled": true,
+                "triggerType": "event",
+                "triggerValue": "OnEmitEvent"
+            }),
+        );
+
+        // 5. Downstream node on event listener: sets variable "eventReceived" = "yes"
+        let var_node = WorkflowNode::new(
+            "var_received",
+            "var_set",
+            Some("Set Variable".to_string()),
+            0.0, 0.0,
+            serde_json::json!({
+                "enabled": true,
+                "varName": "eventReceived",
+                "value": "yes"
+            }),
+        );
+
+        let profile = Profile {
+            version: "4.0.0".to_string(),
+            name: "Test Emit Event Profile".to_string(),
+            canvas: Default::default(),
+            nodes: vec![
+                trig_hotkey.clone(),
+                emit_node.clone(),
+                log_node.clone(),
+                trig_event.clone(),
+                var_node.clone(),
+            ],
+            connections: vec![
+                Connection {
+                    from_node_id: "trig_hk".to_string(),
+                    from_port: "exec_out".to_string(),
+                    to_node_id: "emit_1".to_string(),
+                    to_port: "exec_in".to_string(),
+                },
+                Connection {
+                    from_node_id: "emit_1".to_string(),
+                    from_port: "next".to_string(),
+                    to_node_id: "log_emit".to_string(),
+                    to_port: "exec_in".to_string(),
+                },
+                Connection {
+                    from_node_id: "trig_evt".to_string(),
+                    from_port: "exec_out".to_string(),
+                    to_node_id: "var_received".to_string(),
+                    to_port: "exec_in".to_string(),
+                },
+            ],
+            ..Default::default()
+        };
+
+        {
+            let mut engine = state.engine.write().await;
+            engine.load_profiles(vec![profile]);
+        }
+
+        // Fire Hotkey [1]
+        ActionExecutor::trigger_flow(state.clone(), "keyboard", "1").await;
+
+        // Give background tasks a moment to complete
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+
+        // Verify that the event listener trigger was activated and set the variable
+        let engine = state.engine.read().await;
+        let received = engine.variables_map.get("eventReceived");
+        assert_eq!(received, Some(&serde_json::json!("yes")), "Event listener must be triggered by emit_event!");
+    }
 }
 
 

@@ -193,8 +193,14 @@ impl NodeExecutionEngine {
                     .and_then(|v| v.as_bool())
                     .unwrap_or(true);
 
-                if is_enabled && n_type == trig_type && (normalize_trigger_key(n_val) == val_norm || n_val.eq_ignore_ascii_case(trigger_value)) {
-                    matched.push(node.clone());
+                if is_enabled && n_type == trig_type {
+                    if trig_type == "event" || trig_type == "webhook" {
+                        if n_val.trim().eq_ignore_ascii_case(trigger_value.trim()) {
+                            matched.push(node.clone());
+                        }
+                    } else if normalize_trigger_key(n_val) == val_norm || n_val.eq_ignore_ascii_case(trigger_value) {
+                        matched.push(node.clone());
+                    }
                 }
             }
         }

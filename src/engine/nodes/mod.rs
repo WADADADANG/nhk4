@@ -28,6 +28,15 @@ impl NodeRegistry {
                 inputs: vec![],
                 outputs: vec!["exec_out".to_string()],
             },
+            NodeDefinition {
+                node_type: "emit_event".to_string(),
+                title: "Emit Event".to_string(),
+                category: "Triggers".to_string(),
+                icon: "radio".to_string(),
+                color: "#06b6d4".to_string(),
+                inputs: vec!["in".to_string()],
+                outputs: vec!["onComplete".to_string()],
+            },
 
             // Category: Actions & Input
             NodeDefinition {

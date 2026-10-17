@@ -162,8 +162,14 @@ impl ActionExecutor {
         };
 
         if !triggers.is_empty() {
-            let norm = crate::engine::graph::normalize_trigger_key(trigger_value);
-            let msg = format!("⚡ Hotkey [{}] (Raw: '{}') activated {} matching flow(s)", norm, trigger_value, triggers.len());
+            let msg = if trigger_type.eq_ignore_ascii_case("event") {
+                format!("📡 Event [{}] activated {} matching flow(s)", trigger_value, triggers.len())
+            } else if trigger_type.eq_ignore_ascii_case("webhook") {
+                format!("🌐 Inbound Webhook [{}] activated {} matching flow(s)", trigger_value, triggers.len())
+            } else {
+                let norm = crate::engine::graph::normalize_trigger_key(trigger_value);
+                format!("⚡ Hotkey [{}] (Raw: '{}') activated {} matching flow(s)", norm, trigger_value, triggers.len())
+            };
             println!("{}", msg);
             state.log("action", &msg);
         }
@@ -1200,7 +1206,35 @@ impl ActionExecutor {
                     }
                 }
 
-                // 29. Trigger / Default Pass-through
+                // 29. Emit Event (Broadcast Event across active profiles)
+                "emit_event" => {
+                    let dynamic_event = {
+                        let engine = state.engine.read().await;
+                        Self::resolve_data_string(&engine, &node.id, &["event_in", "msg_in", "val_in", "name_in", "in"])
+                    };
+                    let event_name = dynamic_event.unwrap_or_else(|| {
+                        node.data.get("eventName")
+                            .or_else(|| node.data.get("event"))
+                            .or_else(|| node.data.get("name"))
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("")
+                            .trim()
+                            .to_string()
+                    });
+
+                    if !event_name.is_empty() {
+                        state.log("action", &format!("📡 Broadcast Event: '{}'", event_name));
+                        // Trigger event across all loaded profiles
+                        Self::trigger_flow(state.clone(), "event", &event_name).await;
+                    } else {
+                        state.log("warn", "⚠️ [Emit Event] No eventName specified to broadcast");
+                    }
+
+                    output_port = "onComplete";
+                    state.signal_broadcaster.emit(&node.id, output_port, Some(&event_name));
+                }
+
+                // 30. Trigger / Default Pass-through
                 _ => {
                     state.signal_broadcaster.emit(&node.id, "onComplete", None);
                 }

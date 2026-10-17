@@ -438,6 +438,13 @@
         - ปรับปรุง [`public/index.html`](file:///c:/Users/WADADADANG/Desktop/MyProjects/NodeHotKeyV4/public/index.html) ปลดแอตทริบิวต์ `checked` ที่ค้างอยู่ใน input ซ่อน
         - เพิ่ม Unit Test `test_overlay_persistence_and_profile_isolation` ใน [`src/lib.rs`](file:///c:/Users/WADADADANG/Desktop/MyProjects/NodeHotKeyV4/src/lib.rs)
         - รัน `cargo check` และ `cargo test` ผ่านสมบูรณ์ 100% (**44/44 tests passed**)
+      - **เฟส 47 พัฒนาระบบโหนด Emit Event & Event Trigger Dispatcher สมบูรณ์แบบ:**
+        - เพิ่ม Match Arm `"emit_event"` ใน [`src/engine/executor.rs`](file:///c:/Users/WADADADANG/Desktop/MyProjects/NodeHotKeyV4/src/engine/executor.rs): ดึงชื่อ `eventName` และเรียก `ActionExecutor::trigger_flow(state, "event", &event_name)` เพื่อกระจายสัญญาณปลุกโหนด `trigger` ประเภท Custom Event Listener ในระบบทันทีแบบ Non-blocking (Event-Driven ไร้ Polling 100%) พร้อมส่งสัญญาณ `onComplete` ออกไปยังสายไฟเอาต์พุตของตนเอง
+        - ปรับปรุง `get_matching_trigger_nodes` ใน [`src/engine/graph.rs`](file:///c:/Users/WADADADANG/Desktop/MyProjects/NodeHotKeyV4/src/engine/graph.rs): แยกการตรวจสอบชื่อ Custom Event และ Webhook อย่างแม่นยำ ไม่นำฟังก์ชันจัดระเบียบปุ่มคีย์บอร์ดมาปน
+        - ปรับปรุงการบันทึก Log ใน `trigger_flow`: แสดง `📡 Event [{eventName}] activated X matching flow(s)` อย่างชัดเจน
+        - บันทึก Node Definition `emit_event` ใน [`src/engine/nodes/mod.rs`](file:///c:/Users/WADADADANG/Desktop/MyProjects/NodeHotKeyV4/src/engine/nodes/mod.rs)
+        - เพิ่ม Unit Test `test_emit_event_triggers_event_listener_flow` ใน [`src/lib.rs`](file:///c:/Users/WADADADANG/Desktop/MyProjects/NodeHotKeyV4/src/lib.rs)
+        - รัน `cargo test` ผ่านสมบูรณ์ 100% (**45/45 tests passed**)
 - **สร้างและปรับปรุงเครื่องมือ .bat (Pure English ASCII / Zero Emoji):**
   - [deploy_admin.bat](file:///c:/Users/WADADADANG/Desktop/MyProjects/NodeHotKeyV4/deploy_admin.bat): ดับเบิลคลิก Deploy เว็บแอดมินขึ้น Vercel ในคลิกเดียว
   - [test.bat](file:///c:/Users/WADADADANG/Desktop/MyProjects/NodeHotKeyV4/test.bat): ดับเบิลคลิกรัน Unit Tests ในคลิกเดียว

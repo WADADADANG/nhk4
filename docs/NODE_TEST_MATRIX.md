@@ -21,15 +21,16 @@
 | 3 | **`screenshot`** | Screenshot (Diagnostic) | `in`<br>➡️ `onComplete`, `onError` | ถ่ายภาพหน้าจอเกมแบบ Zero-Flicker (CDP) หรือ Desktop Fallback และบันทึกลง `./screenshots/` | ✅ **ผ่านแล้ว** | กดปุ่มลัดเพื่อบันทึกรูปภาพ ตรวจสอบไฟล์ในโฟลเดอร์ `screenshots/<subfolder>/` |
 | 4 | **`sound`** | Sound Alert | `in`<br>➡️ `onComplete` | เล่นไฟล์เสียงเอฟเฟกต์ Native (`.wav`, `.mp3`) โดยตรงผ่านระบบเสียง OS | ✅ **ผ่านแล้ว** | เลือกเสียงพรีเซ็ต (`alarm`, `ding`, `laser`, `warning`, `success`), ปรับ Volume, เล่นซ้ำ `repeatCount` |
 | 5 | **`emergency_stop`** | Emergency Stop All | `in`<br>➡️ `onComplete` | สั่งหยุดฉุกเฉิน ยุติการทำงานของ Action Graph และบอททุกตัวทันที | ✅ **ผ่านแล้ว** | ยิงสัญญาณเข้าโหนด ตรวจสอบว่า Engine สลับเป็นสถานะ Stopped |
-| 6 | **`webhook_out`** | Discord / HTTP Webhook | `in`<br>➡️ `onSuccess`, `onError` | ยิงแจ้งเตือน HTTP Webhook แบบ Async ออก Discord หรือ External APIs | ⏳ รอทดสอบ | ใส่ Discord Webhook URL แล้วสั่งยิงข้อความแจ้งเตือนเข้าแชท |
-| 7 | **`client_check`** | Client Status Check | `in`<br>➡️ `onOnline`, `onOffline` | ตรวจสอบสถานะว่าจอเกมเป้าหมายกำลังรันอยู่หรือไม่ เพื่อแยกสายไฟทำงาน | ⏳ รอทดสอบ | เช็คสถานะจอ 1 (ถ้าจอเปิดไปสาย `onOnline`, ถ้าจอไม่เปิดไปสาย `onOffline`) |
+| 6 | **`webhook_out`** | Discord / HTTP Webhook | `in`<br>➡️ `onSuccess`, `onError` | ยิงแจ้งเตือน HTTP Webhook แบบ Async ออก Discord หรือ External APIs | ✅ **ผ่านแล้ว** | ใส่ Discord Webhook URL แล้วสั่งยิงข้อความแจ้งเตือนเข้าแชท |
+| 7 | **`client_check`** | Client Status Check | `in`<br>➡️ `onOnline`, `onOffline` | ตรวจสอบสถานะว่าจอเกมเป้าหมายกำลังรันอยู่หรือไม่ เพื่อแยกสายไฟทำงาน | ✅ **ผ่านแล้ว** | เช็คสถานะจอ 1 (ถ้าจอเปิดไปสาย `onOnline`, ถ้าจอไม่เปิดไปสาย `onOffline`) |
 
 ---
 
 ### หมวดที่ 2: ทริกเกอร์และคำสั่งควบคุม (Triggers & Input Controls)
 | # | Node Type | ชื่อที่แสดงผล (Title) | พอร์ต I/O | หน้าที่การทำงาน | สถานะ | วิธีทดสอบเบื้องต้น (Quick Test) |
 | :-: | :--- | :--- | :--- | :--- | :-: | :--- |
-| 8 | **`trigger`** | Global Trigger | ➡️ `exec_out` | ดักจับการกดปุ่มคีย์บอร์ดหรือปุ่มเมาส์ระดับ OS เพื่อเริ่มการทำงานของ Flow | ✅ **ผ่านแล้ว** | กำหนดปุ่มลัด (เช่น `1`, `2`, `F1`) เมื่อกดปุ่มแล้วสายไฟต้องทำงาน |
+| 8 | **`trigger`** | Global Trigger | ➡️ `exec_out` | ดักจับการกดปุ่มคีย์บอร์ด เมาส์ หรือ Event ข้ามระบบ เพื่อเริ่มการทำงานของ Flow | ✅ **ผ่านแล้ว** | กำหนดปุ่มลัด (เช่น `1`, `2`, `F1`) หรือ Custom Event Listener รอรับสัญญาณ |
+| 8.1 | **`emit_event`** | Broadcast Event | `in`<br>➡️ `onComplete` | ส่งสัญญาณ Event ข้ามไปยังโหนด Trigger (Event) ในทุกโปรไฟล์ที่เปิดใช้งาน | ⏳ กำลังทดสอบ | ตั้งชื่อ Event (เช่น `OnEmitEvent`) ยิงไปปลุกโหนด Trigger ตัวอื่น |
 | 9 | **`key_press`** | Single Key Press | `exec_in`<br>➡️ `exec_out` | จำลองการกดปุ่มคีย์บอร์ด 1 ครั้ง ยิงตรงผ่าน CDP ไปยังเกม หรือระดับระบบ | ✅ **ผ่านแล้ว** | สั่งกดปุ่ม เช่น `Spacebar` (กระโดด) หรือปุ่มสกิล `C` ไปยังจอเกมเป้าหมาย |
 | 10 | **`key_hold`** | Key Hold Toggle | `in`<br>➡️ `onEnable`, `onDisable`, `onComplete` | กดปุ่มคีย์บอร์ดค้างไว้ (KeyDown) หรือสั่งปล่อยปุ่มที่ค้าง (KeyUp) สลับสถานะได้อิสระ | ✅ **ผ่านแล้ว**  | สั่งกดปุ่มเดินค้างไว้ (เช่น `W`) กดครั้งที่ 1 = เดินค้าง, กดครั้งที่ 2 = หยุดเดิน |
 | 11 | **`forwarder`** | Multi-Client Forwarder | `exec_in`<br>➡️ `exec_out` | ส่งปุ่มกดกระจายไปยังหลายๆ จอเกมพร้อมกันในคลิกเดียว | ✅ **ผ่านแล้ว** | กดปุ่มครั้งเดียวแล้วคำสั่งต้องไปปรากฏที่ จอ 1, จอ 2, จอ 3 พร้อมกัน |
@@ -41,7 +42,7 @@
 ### หมวดที่ 3: โครงสร้างและการไหลของสายไฟ (Logic & Flow Control)
 | # | Node Type | ชื่อที่แสดงผล (Title) | พอร์ต I/O | หน้าที่การทำงาน | สถานะ | วิธีทดสอบเบื้องต้น (Quick Test) |
 | :-: | :--- | :--- | :--- | :--- | :-: | :--- |
-| 14 | **`delay`** | Delay Timer | `exec_in`<br>➡️ `exec_out` | หน่วงเวลาระหว่างสเต็ปแบบ Async ไม่บล็อก CPU และไม่กระตุก | ⏳ รอทดสอบ | ตั้งหน่วงเวลา 1000ms (1 วินาที) แล้วเช็คว่าโหนดถัดไปทำงานช้าลง 1 วิ |
+| 14 | **`delay`** | Delay Timer | `exec_in`<br>➡️ `exec_out` | หน่วงเวลาระหว่างสเต็ปแบบ Async ไม่บล็อก CPU และไม่กระตุก | ✅ **ผ่านแล้ว** | ตั้งหน่วงเวลา 1000ms (1 วินาที) แล้วเช็คว่าโหนดถัดไปทำงานช้าลง 1 วิ |
 | 15 | **`branch`** | Condition Branch (If/Else) | `in`<br>➡️ `true`, `false` | แยกทิศทางสายไฟตามเงื่อนไขทางตรรกะ จริง หรือ เท็จ | ⏳ รอทดสอบ | ตั้งเงื่อนไขตัวเลขเปรียบเทียบ เช่น `5 > 3` ต้องออกทางพอร์ต `true` |
 | 16 | **`var_branch`** | Variable Condition Branch | `in`<br>➡️ `match`, `mismatch` | เปรียบเทียบค่าของตัวแปรปัจจุบันกับค่าที่กำหนด | ⏳ รอทดสอบ | เช็คว่าตัวแปร `hp` มีค่าน้อยกว่า 50 หรือไม่ |
 | 17 | **`condition_group`** | Condition Group | `in`<br>➡️ `pass`, `fail` | รวมเงื่อนไขหลายข้อเข้าด้วยกันโดยใช้ตรรกะ AND หรือ OR | ⏳ รอทดสอบ | ตรวจสอบเงื่อนไข 2 ข้อพร้อมกัน เช่น ตัวแปร A จริง และ ตัวแปร B จริง |
