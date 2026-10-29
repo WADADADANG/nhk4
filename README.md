@@ -6,7 +6,7 @@ NHK4 is a next-generation, high-performance automation engine natively built in 
 
 ---
 
-## ๐€ Downloads
+## Downloads
 
 Download the latest verified release from the [Releases Page](https://github.com/WADADADANG/nhk4/releases).
 
@@ -16,19 +16,19 @@ Download the latest verified release from the [Releases Page](https://github.com
 
 ---
 
-## โก System Requirements
+## System Requirements
 - **Operating System:** Windows 10 / Windows 11 (64-bit)
 - **RAM:** Minimum 2 GB (4 GB recommended for multi-client)
 - **Display:** 1280x720 or higher
 
 ---
 
-## ๐”’ Security & Verification
+## Security & Verification
 All official binaries are built directly from optimized native Rust source and stripped of debugging artifacts.
 Verify the SHA-256 checksum provided in the release notes before running.
 
 ---
 
-## ๐“ License
+## License
 Copyright (c) 2026 NHK4. All rights reserved.  
 This software is proprietary and distributed under strict license terms. Unauthorized reverse engineering, redistribution, or modification is prohibited.
